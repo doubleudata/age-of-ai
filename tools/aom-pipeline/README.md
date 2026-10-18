@@ -63,8 +63,8 @@ node tools/aom-pipeline/ingest.mjs --extract extract/ [--models models.json] [--
 * **sprites:** each GLB is rendered in headless Chromium (three.js, orthographic
   camera at the game's dimetric angle) into **8-direction sprite sheets** with
   idle/walk/attack/gather/death rows, plus a **player-colour mask** from the materials
-  whose name matches `--mask` (default `player|team|pcolor|pc`). Retold marks team
-  colour in texture channels rather than material names, so check the bake warning:
+  whose name matches `--mask` (default `player|team|pcolor|pc`). Models that mark team
+  colour in their textures instead of a named material aren't detected, so check the bake warning:
   if nothing matched, units are drawn without team colours (only the selection ring)
   until you split the team-coloured parts into their own material in Blender.
   Models are matched by proto name automatically. Override with `models.json`:
