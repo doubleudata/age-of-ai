@@ -33,8 +33,8 @@ export interface SpriteSheetMeta {
   anchorY: number;
   /** Directions per animation (8 = every 45°, starting facing screen-down, clockwise). */
   dirs: number;
-  /** World height the frame represents, in tiles (for scaling to the zoom). */
-  tilesTall: number;
+  /** Bake scale: frame pixels per world meter (1 tile = 2 m). */
+  pxPerMeter: number;
   anims: Partial<Record<AnimName, SpriteAnim>>;
 }
 

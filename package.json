@@ -16,5 +16,9 @@
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
     "build": "npm run build -w client",
     "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.56.0",
+    "three": "^0.186.1"
   }
 }

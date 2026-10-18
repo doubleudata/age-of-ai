@@ -106,5 +106,14 @@ const s = unitStats('swordsman', 'greek');
 check(`applied: Greek Hoplite uses original stats (hp ${s.hp}, bonus vs cav ${s.combat.bonus?.cavalry})`, s.hp === 120 && s.combat.bonus?.cavalry === 2.5 && CIVS.greek.src === 'original');
 check('unmatched units keep their approximations', COMBAT.hydra.src === 'approx');
 
+// original-game <action><param> layout (as read by Weesals/ModHQ)
+const CLASSIC = `<proto><unit id="7" name="Ulfsark"><maxhitpoints>110</maxhitpoints><maxvelocity>4.5</maxvelocity><los>14</los>
+  <icon>UserInterface\\Icons\\Units\\ulfsark_icon</icon><unittype>Infantry</unittype>
+  <action name="HandAttack"><param name="Damage" type="Hack" value1="8"/><param name="DamageBonus" type="Cavalry" value1="2"/>
+  <param name="MaximumRange" value1="0"/><param name="ROF" value1="1.5"/></action></unit></proto>`;
+const ulf = extractUnit(indexProto(parseXml(CLASSIC)).get('ulfsark'));
+check('original-game <action>/<param> layout: damage, type, bonus, range, rof', ulf.attack === 8 && ulf.combat.dmg === 'hack' && ulf.combat.bonus.cavalry === 2 && ulf.range === 1 && ulf.attackCooldown === 1.5);
+check('icon path captured for the asset pipeline', /ulfsark_icon$/.test(ulf.icon));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

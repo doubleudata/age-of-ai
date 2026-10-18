@@ -25,3 +25,6 @@ _sprites_backup_procedural-era-set/
 art-in/
 image/
 Gemini_Generated_Image_*.png
+
+# Assets converted from your own copy of Age of Mythology (tools/aom-pipeline) — never commit
+client/public/aom/

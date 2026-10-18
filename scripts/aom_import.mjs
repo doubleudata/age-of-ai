@@ -200,8 +200,28 @@ export function extractUnit(u) {
     if (t !== undefined) { armor[t] = Number(a.attrs.value ?? a.text); armorSeen = true; }
   }
   if (armorSeen) combat.armor = armor;
-  // first attack action with damage
+  // first attack action with damage — Retold/EE style: <protoaction><name>…</name><damage>…
   const action = kids(u, 'protoaction').find((a) => kid(a, 'damage') && /attack/i.test(kid(a, 'name')?.text ?? ''));
+  // original-game style (layout confirmed from Weesals/ModHQ):
+  //   <action name="HandAttack"><param name="Damage" type="Hack" value1="9"/>
+  //     <param name="DamageBonus" type="Cavalry" value1="2"/><param name="MaximumRange" value1="0"/></action>
+  const classic = !action && kids(u, 'action').find((a) => /attack/i.test(a.attrs.name ?? '') && kids(a, 'param').some((pp) => norm(pp.attrs.name) === 'damage'));
+  if (classic) {
+    const params = kids(classic, 'param');
+    const pv = (pp) => Number(pp.attrs.value1 ?? pp.text);
+    const dmg = params.filter((pp) => norm(pp.attrs.name) === 'damage').map((pp) => ({ t: norm(pp.attrs.type ?? 'hack'), v: pv(pp) })).sort((a, b) => b.v - a.v)[0];
+    if (dmg) { out.attack = dmg.v; if (dmg.t in DMG) combat.dmg = dmg.t; }
+    const range = params.find((pp) => norm(pp.attrs.name) === 'maximumrange');
+    if (range) out.range = Math.max(1, +(pv(range) / METERS_PER_TILE).toFixed(2));
+    const rof = params.find((pp) => norm(pp.attrs.name) === 'rof');
+    if (rof) out.attackCooldown = pv(rof);
+    const bonus = {};
+    for (const b of params.filter((pp) => norm(pp.attrs.name) === 'damagebonus')) {
+      const cls = CLASS_MAP[norm(b.attrs.type ?? '')];
+      if (cls) bonus[cls] = pv(b);
+    }
+    if (Object.keys(bonus).length) combat.bonus = bonus;
+  }
   if (action) {
     const dmgNodes = kids(action, 'damage');
     const best = dmgNodes.map((d) => ({ t: norm(d.attrs.type ?? kid(action, 'damagetype')?.text ?? 'hack'), v: Number(d.text) }))
@@ -218,6 +238,9 @@ export function extractUnit(u) {
     }
     if (Object.keys(bonus).length) combat.bonus = bonus;
   }
+  // icon paths (used by the asset pipeline to find converted PNGs)
+  const icon = kid(u, 'icon')?.text;
+  if (icon) out.icon = icon;
   const cls = kids(u, 'unittype').map((t) => CLASS_MAP[norm(t.text)]).find(Boolean);
   if (cls) combat.cls = cls;
   if (Object.keys(combat).length) out.combat = combat;
@@ -241,7 +264,7 @@ export function buildOverrides(protoIndex) {
   const find = (cands) => cands.map((c) => protoIndex.get(norm(c))).find(Boolean);
   for (const [ours, cands] of Object.entries(PROTO_NAMES.units)) {
     const u = find(cands);
-    if (u) { o.units[ours] = extractUnit(u); report.matched.push(`${ours} ← ${u.attrs.name}`); } else report.missing.push(`${ours} (${cands.join('/')})`);
+    if (u) { const { icon: _icon, ...stats } = extractUnit(u); o.units[ours] = stats; report.matched.push(`${ours} ← ${u.attrs.name}`); } else report.missing.push(`${ours} (${cands.join('/')})`);
   }
   for (const [civ, units] of Object.entries(PROTO_NAMES.civUnits)) {
     for (const [ours, cands] of Object.entries(units)) {
@@ -250,7 +273,8 @@ export function buildOverrides(protoIndex) {
       const st = extractUnit(u);
       // civ flavor uses the same field names, plus the original display name
       o.civUnits[civ] ??= {};
-      o.civUnits[civ][ours] = { name: u.attrs.name.replace(/([a-z])([A-Z])/g, '$1 $2'), ...st };
+      const { icon: _icon, ...stats } = st;
+      o.civUnits[civ][ours] = { name: u.attrs.name.replace(/([a-z])([A-Z])/g, '$1 $2'), ...stats };
       report.matched.push(`${civ}.${ours} ← ${u.attrs.name}`);
     }
   }
@@ -259,7 +283,7 @@ export function buildOverrides(protoIndex) {
 
 // ---------------------------------------------------------------- CLI
 
-function loadTrees(file) {
+export function loadTrees(file) {
   const buf = readFileSync(file);
   const lower = file.toLowerCase();
   if (lower.endsWith('.bar')) {

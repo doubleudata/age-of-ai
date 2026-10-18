@@ -242,8 +242,9 @@ export class GameState {
           if (Math.abs(screenDx) > Math.max(0.0001, Math.abs(screenDy) * 0.2)) {
             this.unitFacings.set(u.id, screenDx > 0 ? 1 : -1);
           }
-          // Barcos: guarda o VETOR do deslocamento (a proa aponta pra onde vai).
-          if (isNavalUnit(u.type) && dx * dx + dy * dy > 0.000001) {
+          // VETOR do deslocamento: barcos (a proa aponta pra onde vai) e
+          // sprites importados de 8 direções usam isto.
+          if (dx * dx + dy * dy > 0.000001) {
             const f = this.boatFacingDirs.get(u.id);
             if (f) { f.x = dx; f.y = dy; }
             else this.boatFacingDirs.set(u.id, { x: dx, y: dy });
@@ -412,6 +413,11 @@ export class GameState {
   }
 
   /** Direção de movimento do barco (vetor no mundo; mantida quando ele para). */
+  /** Last movement vector of any unit (world tiles), for 8-way sprites. */
+  moveDir(u: UnitSnap): { x: number; y: number } | undefined {
+    return this.boatFacingDirs.get(u.id);
+  }
+
   boatFacing(u: UnitSnap): { x: number; y: number } | undefined {
     return this.boatFacingDirs.get(u.id);
   }

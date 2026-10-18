@@ -11,6 +11,7 @@ import { ISO_HH, ISO_HW } from './camera';
 import { Ambient } from './ambient';
 import { Sprites, TreeSprites, type SpriteFit } from './sprites';
 import type { UIState } from './uistate';
+import { aomSprite, dirIndex, tintedMask, type AnimName, type LoadedSheet } from './aomAssets';
 import { ghostTile, wallLineTiles } from './uistate';
 
 export const RESOURCE_COLORS: Record<ResourceType, string> = {
@@ -2379,6 +2380,15 @@ export class Renderer {
       ctx.beginPath();
       ctx.ellipse(sx, sy, U * (0.5 + age * 0.9), U * (0.22 + age * 0.4), 0, 0, Math.PI * 2);
       ctx.fill();
+      const dsheet = aomSprite(u.type, this.gs.civOf(u.owner));
+      if (dsheet?.meta.anims.death) {
+        // imported model: play its own death animation, then fade
+        ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - 0.6) / 0.4);
+        this.drawSpriteFrame(ctx, dsheet, 'death', Math.min(dsheet.meta.anims.death.frames - 1, Math.floor(age * 1.6 * dsheet.meta.anims.death.frames)),
+          this.spriteDir(dsheet, u, false, px, py), sx, sy, hh, this.gs.colorOf(u.owner));
+        ctx.globalAlpha = 1;
+        continue;
+      }
       const ease = 1 - (1 - Math.min(1, age * 2.2)) ** 2; // tomba rápido, depois some
       const dir = u.id & 1 ? 1 : -1;
       ctx.save();
@@ -2575,6 +2585,66 @@ export class Renderer {
     else if (u.type === 'knight') this.figKnight(ctx, sx, sy, U, color, dark, skin, steel, age);
     else if (u.type === 'hero') this.figHero(ctx, sx, sy, U, color, dark, skin, steel, age, now);
     else if (MYTH_LOOK[u.type]) this.figMyth(ctx, sx, sy, U * (MYTH_LOOK[u.type]!.scale), u, color, dark, now, false);
+  }
+
+  // ---------- imported sprite sheets (tools/aom-pipeline) ----------
+
+  /** Direction index for a unit: toward its target while working/fighting,
+   *  else its last movement. */
+  private spriteDir(
+    s: LoadedSheet, u: UnitSnap, moving: boolean,
+    px: (x: number, y: number) => number, py: (x: number, y: number) => number,
+  ): number {
+    void px; void py;
+    let dx = 0;
+    let dy = 0;
+    if (!moving && u.targetId != null) {
+      const nd = this.gs.nodes.get(u.targetId);
+      const bd = this.gs.buildings.get(u.targetId);
+      const tu = this.gs.units.get(u.targetId);
+      const tp = nd ? { x: nd.tileX + 0.5, y: nd.tileY + 0.5 } : bd ? { x: bd.tileX + (BUILDING_DEFS[bd.type]?.size ?? 1) / 2, y: bd.tileY + (BUILDING_DEFS[bd.type]?.size ?? 1) / 2 } : tu ? { x: tu.x, y: tu.y } : null;
+      if (tp) { dx = tp.x - u.x; dy = tp.y - u.y; }
+    }
+    if (dx === 0 && dy === 0) {
+      const m = this.gs.moveDir(u);
+      if (m) { dx = m.x; dy = m.y; }
+    }
+    if (dx === 0 && dy === 0) { dx = 1; dy = 1; } // default: facing the viewer
+    return dirIndex(dx, dy, s.meta.dirs);
+  }
+
+  private drawSpriteFrame(
+    ctx: CanvasRenderingContext2D, s: LoadedSheet, anim: AnimName, frame: number, dir: number,
+    sx: number, sy: number, hh: number, color: string,
+  ): void {
+    const a = s.meta.anims[anim] ?? s.meta.anims.idle;
+    if (!a) return;
+    const m = s.meta;
+    // screen px per meter: a tile (2 m) spans 2·hw = 4·hh px across its diagonal (2√2 m)
+    const k = (Math.SQRT2 * hh) / m.pxPerMeter;
+    const col = Math.max(0, Math.min(a.frames - 1, frame));
+    const srcX = col * m.frameW;
+    const srcY = (a.row + (dir % m.dirs)) * m.frameH;
+    const dw = m.frameW * k;
+    const dh = m.frameH * k;
+    const dx = sx - m.anchorX * k;
+    const dy = sy - m.anchorY * k;
+    ctx.drawImage(s.img, srcX, srcY, m.frameW, m.frameH, dx, dy, dw, dh);
+    const tint = tintedMask(s, color);
+    if (tint) ctx.drawImage(tint, srcX, srcY, m.frameW, m.frameH, dx, dy, dw, dh);
+  }
+
+  private drawSpriteUnit(
+    ctx: CanvasRenderingContext2D, s: LoadedSheet, u: UnitSnap, sx: number, sy: number, hh: number, now: number,
+    moving: boolean, attacking: boolean, color: string,
+    px: (x: number, y: number) => number, py: (x: number, y: number) => number,
+  ): void {
+    const working = u.state === 'gathering' || u.state === 'building';
+    const anim: AnimName = moving ? 'walk' : attacking ? 'attack' : working ? (s.meta.anims.gather ? 'gather' : 'attack') : 'idle';
+    const a = s.meta.anims[anim] ?? s.meta.anims.idle;
+    const frames = a?.frames ?? 1;
+    const frame = Math.floor((now / 1000) * (a?.fps ?? 10) + (u.id % 7)) % frames;
+    this.drawSpriteFrame(ctx, s, anim, frame, this.spriteDir(s, u, moving, px, py), sx, sy, hh, color);
   }
 
   /** Civ hero: an infantryman wrapped in a golden aura and cape (placeholder art). */
@@ -3086,7 +3156,10 @@ export class Renderer {
     }
 
     const age = this.ownerAge(u.owner);
-    if (u.type === 'villager') {
+    const sheet = aomSprite(u.type, this.gs.civOf(u.owner));
+    if (sheet) {
+      this.drawSpriteUnit(ctx, sheet, u, sx, sy, hh, now, moving, attacking, color, px, py);
+    } else if (u.type === 'villager') {
       this.figVillager(ctx, sx, sy, U, color, dark, skin, u, now, moving, face, tool, age);
     } else {
       // militares: leve saltito ao andar e avanço ao atacar (corpo inteiro)
@@ -3107,7 +3180,7 @@ export class Renderer {
       else if (look) this.figMyth(ctx, fx, fy, U, u, color, dark, now, moving);
       ctx.restore();
       // identifying glyph above myth units (not mirrored)
-      if (look && u.type !== 'hero' && U >= 9) {
+      if (look && !sheet && u.type !== 'hero' && U >= 9) {
         ctx.font = `${Math.max(9, Math.round(U * 0.55))}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.fillText(look.glyph, fx, fy - U * 2.35);
