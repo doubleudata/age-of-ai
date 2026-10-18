@@ -71,6 +71,24 @@ function spawnCornerOrder(playerCount: number): number[] {
   return [0, 1, 2, 3];
 }
 
+/** Spawn points for every player. Up to 4 players keep the original corner
+ *  layout. 5-6 players don't fit in 4 corners, so they're spaced evenly on a
+ *  ring around the map center (starting from the top-left corner direction).
+ *  On a 144 map with 6 players that's ~60 tiles between neighbors. */
+export function spawnPoints(size: number, playerCount: number): { x: number; y: number }[] {
+  if (playerCount <= 4) {
+    const order = spawnCornerOrder(playerCount);
+    return Array.from({ length: playerCount }, (_, i) => cornerFor(size, order[i]));
+  }
+  const c = (size - 1) / 2;
+  const r = c - CORNER_INSET - 4; // stays inside the map with room for the base
+  const start = -0.75 * Math.PI; // top-left, same as corner 0
+  return Array.from({ length: playerCount }, (_, i) => {
+    const a = start + (i * 2 * Math.PI) / playerCount;
+    return { x: Math.round(c + Math.cos(a) * r), y: Math.round(c + Math.sin(a) * r) };
+  });
+}
+
 function dist(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
 }
@@ -100,9 +118,7 @@ function tryGenerate(playerCount: number, seed: number, forceCarve = false, terr
   const tiles = new Array<number>(size * size).fill(TILE_GRASS);
   const blocked = new Uint8Array(size * size);
 
-  const spawns: { x: number; y: number }[] = [];
-  const cornerOrder = spawnCornerOrder(playerCount);
-  for (let i = 0; i < playerCount; i++) spawns.push(cornerFor(size, cornerOrder[i]));
+  const spawns = spawnPoints(size, playerCount);
 
   if (terrain === 'river' || terrain === 'strait') {
     // RIO cruzando o mapa. 'river' tem VAUS (banco de areia, travessia a pé);

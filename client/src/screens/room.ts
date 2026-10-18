@@ -2,7 +2,7 @@
 // (Jogadores | Configuração da partida), ações centrais e chat embaixo. Foco desktop.
 
 import type { BotDifficulty, GameMode, RoomPlayer, TerrainKind } from '@age/shared';
-import { MAX_PLAYERS_PER_ROOM, MIN_PLAYERS_TO_START } from '@age/shared';
+import { MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START } from '@age/shared';
 import { el } from '../ui';
 import { t } from '../i18n';
 import { TERRAIN_THUMB_SVG } from './terrainThumbs';
@@ -365,7 +365,7 @@ export class RoomScreen {
       const tb = el('button', `team-chip t${team}`, `${team === 0 ? '—' : team} ▾`);
       tb.title = t('room.team_tip');
       tb.disabled = !meHost;
-      tb.addEventListener('click', () => this.deps.onSetTeam(p.id, (team + 1) % 3));
+      tb.addEventListener('click', () => this.deps.onSetTeam(p.id, (team + 1) % (MAX_TEAMS + 1)));
       meta.appendChild(tb);
       if (p.isHost) {
         meta.appendChild(el('span', 'crown', '♛'));

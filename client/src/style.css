@@ -338,6 +338,7 @@ input.txt:focus { border-color: var(--gold); }
 }
 .team-chip.t1 { border-color: #4c86c8; color: #9cc4ee; }
 .team-chip.t2 { border-color: #c85555; color: #f0a2a2; }
+.team-chip.t3 { border-color: #4caf6a; color: #a6e0b6; }
 .team-chip:disabled { opacity: 0.75; cursor: default; }
 .chat-panel { display: flex; flex-direction: column; gap: 8px; }
 .chat-log {
@@ -918,6 +919,7 @@ button.btn.trade-btn {
 }
 .room-screen .team-chip.t1 { border-color: #4c86c8; color: #9cc4ee; }
 .room-screen .team-chip.t2 { border-color: #c85555; color: #f0a2a2; }
+.room-screen .team-chip.t3 { border-color: #4caf6a; color: #a6e0b6; }
 .room-screen .team-chip:disabled { opacity: 0.75; cursor: default; }
 .ready-pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
 .ready-pill.yes { color: var(--green); border-color: #3f6b3e; background: rgba(106, 191, 105, 0.1); }

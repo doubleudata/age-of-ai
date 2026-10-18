@@ -21,7 +21,9 @@ export const TILE_WATER = 1;
 export const TILE_SHALLOW = 2;
 
 // ---------- Partida ----------
-export const MAX_PLAYERS_PER_ROOM = 4;
+export const MAX_PLAYERS_PER_ROOM = 6;
+/** Times possíveis na sala (0 = sozinho; 1..MAX_TEAMS). 3 permite 2v2v2. */
+export const MAX_TEAMS = 3;
 // 1 permite treinar 100% sozinho (o host remove o bot automático da sala).
 export const MIN_PLAYERS_TO_START = 1;
 export const STARTING_RESOURCES: Resources = { food: 250, wood: 250, gold: 100, stone: 100 };
@@ -370,4 +372,4 @@ export const SHEEP_SCATTER_CLUSTERS = 3; // grupinhos espalhados pelo mapa
 export const SHEEP_SCATTER_PER_CLUSTER = 2;
 
 // ---------- Jogadores ----------
-export const PLAYER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#eab308'];
+export const PLAYER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#eab308', '#a855f7', '#06b6d4'];

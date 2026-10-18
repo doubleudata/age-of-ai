@@ -1,6 +1,6 @@
 // Lobby: conexões, salas, chat e transição sala -> partida.
 
-import { MAX_PLAYERS_PER_ROOM, MIN_PLAYERS_TO_START, PLAYER_COLORS } from '@age/shared';
+import { MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START, PLAYER_COLORS } from '@age/shared';
 import type { BotDifficulty, ClientMessage, GameMode, RoomPlayer, RoomSummary, ServerMessage, TerrainKind } from '@age/shared';
 import { Game, type RoomMember } from './game/room';
 
@@ -675,12 +675,12 @@ export class Lobby {
     this.broadcastRoomState(room.id);
   }
 
-  /** Host define o TIME de qualquer vaga (0 = sozinho, 1/2 = time). */
+  /** Host define o TIME de qualquer vaga (0 = sozinho, 1..MAX_TEAMS = time). */
   private setTeam(conn: Connection, playerId: number, team: number): void {
     if (!conn.roomId) return;
     const room = this.rooms.get(conn.roomId);
     if (!room || room.inGame || room.hostId !== conn.id) return;
-    if (team !== 0 && team !== 1 && team !== 2) return;
+    if (!Number.isInteger(team) || team < 0 || team > MAX_TEAMS) return;
     const m = room.members.get(playerId);
     if (!m) return;
     m.team = team === 0 ? undefined : team;
