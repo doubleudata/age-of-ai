@@ -168,6 +168,20 @@ export class GameInput {
       return;
     }
 
+    // AoM: a god power is armed — left click casts it here, right click cancels
+    if (this.ui.powerTarget) {
+      if (e.button === 0) {
+        const w = this.cam.screenToWorld(pos.x, pos.y);
+        this.cmd({ kind: 'castPower', power: this.ui.powerTarget, x: w.x, y: w.y });
+        this.mark('attack', w.x, w.y);
+      }
+      if (e.button === 0 || e.button === 2) {
+        e.preventDefault();
+        this.ui.powerTarget = null;
+        return;
+      }
+    }
+
     if (e.button === 0) {
       if (this.ui.placement) {
         if (this.ui.placement === 'wall') {
@@ -259,7 +273,9 @@ export class GameInput {
     }
     if (this.paused) return;
     if (e.key === 'Escape') {
-      if (this.ui.placement) {
+      if (this.ui.powerTarget) {
+        this.ui.powerTarget = null;
+      } else if (this.ui.placement) {
         this.ui.placement = null;
         this.ui.wallDrag = null;
       } else if (this.gs.selection.size > 0) {
@@ -583,6 +599,12 @@ export class GameInput {
             this.cmd({ kind: 'build', unitIds, building: b.type, tileX: b.tileX, tileY: b.tileY });
             return;
           }
+          // AoM Greek: villagers worship at their Temple (favor)
+          if (b.type === 'temple' && (b.progress ?? 1) >= 1 && hasVillager && this.gs.civOf(this.gs.you) === 'greek') {
+            this.mark('gather', w.x, w.y, b.id);
+            this.cmd({ kind: 'gather', unitIds, targetId: b.id });
+            return;
+          }
           if (b.type === 'farm' && (b.progress ?? 1) >= 1 && hasVillager) {
             this.mark('gather', w.x, w.y, b.id);
             this.cmd({ kind: 'gather', unitIds, targetId: b.id });
@@ -679,7 +701,15 @@ export class GameInput {
 
   // ---------------------------------------------------------------- posicionamento
 
+  /** AoM: arm a targeted god power (next left click on the map casts it). */
+  startPowerTargeting(power: string): void {
+    this.ui.placement = null;
+    this.ui.wallDrag = null;
+    this.ui.powerTarget = power;
+  }
+
   startPlacement(type: BuildingType): void {
+    this.ui.powerTarget = null;
     this.ui.placement = type;
     this.ui.wallDrag = null;
   }

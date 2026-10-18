@@ -49,7 +49,20 @@ import {
   techBonus,
   tradeBuyCost,
   tradeSellGain,
+  armorVs,
+  classBonus,
+  COMBAT,
+  FAVOR_CAP,
+  FAVOR_RULES,
+  MAJOR_GODS,
+  MINOR_GODS,
+  minorGodOptions,
+  POWERS,
+  SUMMON_ONLY,
+  techCostFor,
+  unitStats,
 } from '@age/shared';
+import type { CombatDef, DamageType, MajorGodId, MinorGodId, PowerFxSnap, PowerId } from '@age/shared';
 import type {
   BotDifficulty,
   BuildingSnap,
@@ -84,7 +97,22 @@ export interface RoomMember {
   color: string;
   isBot?: boolean;
   difficulty?: BotDifficulty; // só bots
-  team?: number; // 0/ausente = sozinho; 1/2 = time
+  team?: number; // 0/ausente = sozinho; 1..3 = time
+  /** AoM major god (lobby resolves 'random'). Absent = generic Age of AI civ. */
+  god?: MajorGodId;
+}
+
+/** A god power on the map: ongoing effects tick until `end`; `flashEnd` keeps
+ *  instant powers visible briefly. */
+interface ActivePower {
+  id: number;
+  power: PowerId;
+  owner: number;
+  x: number;
+  y: number;
+  radius: number;
+  start: number;
+  end: number;
 }
 
 export type SendFn = (playerId: number, msg: ServerMessage) => void;
@@ -114,6 +142,17 @@ export class Game {
    *  MAGRA, sem a economia de ninguém (ver `broadcastSnapshot`). */
   readonly spectators = new Set<number>();
   /** Preços do mercado (ouro por lote de 100) — da SALA, movem com as trocas. */
+  /** Sheep a villager failed to path to → tick until which bots skip them.
+   *  Without this a bot re-ordered the same unreachable sheep every second and
+   *  each failed A* swept the whole map (seen as 150-200 ms ticks; pre-existing). */
+  private readonly sheepUnreachableUntil = new Map<number, number>();
+  sheepBlocked(id: number): boolean {
+    return (this.sheepUnreachableUntil.get(id) ?? 0) > this.tick;
+  }
+
+  /** AoM god powers in effect / still showing on the map. */
+  private activePowers: ActivePower[] = [];
+  private nextFxId = 1;
   private marketPrices: MarketPrices = {
     food: MARKET_START_PRICE,
     wood: MARKET_START_PRICE,
@@ -152,6 +191,7 @@ export class Game {
     members.forEach((m) => {
       // Muito difícil (Titã): o bot começa com um bônus de recursos.
       const mult = m.isBot && m.difficulty ? DIFFICULTY[m.difficulty].resourceMult : 1;
+      const god = m.god && MAJOR_GODS[m.god] ? m.god : undefined;
       this.players.set(m.id, {
         id: m.id,
         name: m.name,
@@ -161,7 +201,12 @@ export class Game {
           wood: Math.round(baseRes.wood * mult),
           gold: Math.round(baseRes.gold * mult),
           stone: Math.round(baseRes.stone * mult),
+          favor: Math.min(FAVOR_CAP, baseRes.favor + (god ? MAJOR_GODS[god].bonus.startFavor ?? 0 : 0)),
         },
+        civ: god ? MAJOR_GODS[god].civ : undefined,
+        god,
+        minorGods: [],
+        powersUsed: new Set<PowerId>(),
         defeated: false,
         age: battle ? BATTLE_STARTING_AGE : 1,
         techs: new Set<string>(),
@@ -186,6 +231,16 @@ export class Game {
     }
     for (const n of gen.nodes) this.nodes.set(n.id, n);
     for (const s of gen.sheep) this.sheep.set(s.id, s); // selvagens (owner -1), sem remap
+
+    // Battle mode starts in an advanced age: grant the minor gods of the ages
+    // skipped (random pick), so their myth units and powers are available.
+    for (const p of this.players.values()) {
+      if (!p.civ) continue;
+      for (let a = 2; a <= p.age; a++) {
+        const opts = minorGodOptions(p.civ, a);
+        if (opts.length) p.minorGods.push(opts[Math.floor(Math.random() * opts.length)].id);
+      }
+    }
   }
 
   start(): void {
@@ -287,8 +342,13 @@ export class Game {
     this.tick++;
 
     // IA dos bots (~1x/s): enfileira comandos que são aplicados neste mesmo tick.
-    if (this.botIds.size > 0 && this.tick % 10 === 0) {
+    // Each bot thinks once per second, but on its OWN tick offset: with 6 bots
+    // planning on the same tick, the base-planning floods spiked a single tick
+    // past the 100 ms budget. Spreading them keeps every tick light.
+    if (this.botIds.size > 0) {
+      let slot = 0;
       for (const id of this.botIds) {
+        if ((this.tick + slot++) % 10 !== 0) continue;
         const bp = this.players.get(id);
         if (bp && !bp.defeated) runBotAI(this, id);
       }
@@ -301,6 +361,8 @@ export class Game {
     this.separateIdleUnits(dt);
     this.updateSheep(dt);
     this.updateTowers(dt);
+    this.updatePowers(dt);
+    this.updateFavorAndRegen(dt);
     for (const b of this.buildings.values()) this.updateBuildingTraining(b, dt);
 
     // pesquisa de era em andamento
@@ -309,6 +371,8 @@ export class Game {
       p.ageResearch.elapsed += dt;
       if (p.ageResearch.elapsed >= (AGE_RESEARCH_TIME[p.ageResearch.target] ?? 0)) {
         p.age = p.ageResearch.target;
+        // AoM: the minor god chosen for this age joins your pantheon now
+        if (p.ageResearch.god && !p.minorGods.includes(p.ageResearch.god)) p.minorGods.push(p.ageResearch.god);
         p.ageResearch = undefined;
       }
     }
@@ -352,8 +416,15 @@ export class Game {
           ? Math.min(1, p.ageResearch.elapsed / (AGE_RESEARCH_TIME[p.ageResearch.target] || 1))
           : undefined,
         techs: [...p.techs],
+        minorGods: [...p.minorGods],
+        powersUsed: [...p.powersUsed],
+        ...(p.ageResearch?.god ? { ageGod: p.ageResearch.god } : {}),
       });
     }
+    const fx: PowerFxSnap[] = this.activePowers.map((a) => ({
+      id: a.id, power: a.power, owner: a.owner, x: a.x, y: a.y, radius: a.radius,
+      left: Math.max(0, Math.min(1, (a.end - this.tick) / Math.max(1, a.end - a.start))),
+    }));
     const msg: ServerMessage = {
       type: 'snapshot',
       tick: this.tick,
@@ -363,6 +434,7 @@ export class Game {
       sheep: sheepSnap,
       players: playersSnap,
       market: { ...this.marketPrices },
+      ...(fx.length ? { fx } : {}),
       // Quem está jogando merece saber que está sendo observado.
       ...(this.spectators.size > 0 ? { spectators: this.spectators.size } : {}),
     };
@@ -391,7 +463,9 @@ export class Game {
       sheep: sheepSnap,
       players: playersSnap.map((p) => ({
         id: p.id, pop: p.pop, popCap: p.popCap, defeated: p.defeated, age: p.age,
+        minorGods: p.minorGods,
       })),
+      ...(fx.length ? { fx } : {}),
     };
     for (const id of this.spectators) this.send(id, magro);
   }
@@ -552,7 +626,10 @@ export class Game {
         this.cmdSetRally(playerId, cmd.buildingId, cmd.x, cmd.y);
         break;
       case 'advanceAge':
-        this.cmdAdvanceAge(playerId);
+        this.cmdAdvanceAge(playerId, cmd.minorGod);
+        break;
+      case 'castPower':
+        this.cmdCastPower(playerId, cmd.power, cmd.x, cmd.y);
         break;
       case 'research':
         this.cmdResearch(playerId, cmd.buildingId, cmd.techId);
@@ -604,6 +681,7 @@ export class Game {
     const tech = TECH_DEFS.find((t) => t.id === techId);
     if (!tech || tech.building !== b.type) return;
     if (p.techs.has(techId)) return;
+    const techCost = techCostFor(tech, p.god); // Isis: cheaper techs
     if (b.research) {
       this.errorTo(playerId, 'err.building_researching');
       return;
@@ -616,11 +694,11 @@ export class Game {
       this.errorTo(playerId, 'err.requires_prev_upgrade');
       return;
     }
-    if (!this.canAfford(p, tech.cost)) {
+    if (!this.canAfford(p, techCost)) {
       this.errorTo(playerId, 'err.no_resources');
       return;
     }
-    this.deduct(p, tech.cost);
+    this.deduct(p, techCost);
     b.research = { id: techId, elapsed: 0 };
   }
 
@@ -637,7 +715,7 @@ export class Game {
     }
   }
 
-  private cmdAdvanceAge(playerId: number): void {
+  private cmdAdvanceAge(playerId: number, minorGod?: string): void {
     const p = this.players.get(playerId);
     if (!p || p.defeated) return;
     if (p.ageResearch) {
@@ -671,8 +749,193 @@ export class Game {
       this.errorTo(playerId, 'err.no_resources');
       return;
     }
+    // AoM: pick one of the two minor gods of the next age (invalid/absent =
+    // random). Validated against the player's civ — a client can't pick
+    // another civ's god.
+    let god: MinorGodId | undefined;
+    if (p.civ) {
+      const opts = minorGodOptions(p.civ, p.age + 1);
+      const chosen = opts.find((o) => o.id === minorGod);
+      god = (chosen ?? opts[Math.floor(Math.random() * opts.length)])?.id;
+    }
     this.deduct(p, cost);
-    p.ageResearch = { target: p.age + 1, elapsed: 0 };
+    p.ageResearch = { target: p.age + 1, elapsed: 0, god };
+  }
+
+  // ---------------- Age of Mythology: temple, favor, god powers ----------------
+
+  /** Temple training rules. Non-temple units pass through unchanged. */
+  private canTrainAtTemple(p: GamePlayer, unit: UnitType): boolean {
+    if (SUMMON_ONLY.has(unit)) return false;
+    if (unit === 'hero') return !!p.civ;
+    if (COMBAT[unit]?.cls !== 'myth') return true;
+    return p.minorGods.some((g) => MINOR_GODS[g].myth === unit);
+  }
+
+  /** Powers this player owns: the major god's + one per minor god. */
+  powersOf(p: GamePlayer): PowerId[] {
+    if (!p.god) return [];
+    return [MAJOR_GODS[p.god].power, ...p.minorGods.map((g) => MINOR_GODS[g].power)];
+  }
+
+  private cmdCastPower(playerId: number, powerId: string, x?: number, y?: number): void {
+    const p = this.players.get(playerId);
+    if (!p || p.defeated) return;
+    const def = (POWERS as Record<string, (typeof POWERS)[PowerId]>)[powerId];
+    if (!def || !this.powersOf(p).includes(def.id)) {
+      this.errorTo(playerId, 'err.power_unknown');
+      return;
+    }
+    if (p.powersUsed.has(def.id)) {
+      this.errorTo(playerId, 'err.power_used');
+      return;
+    }
+    const n = this.grid.size;
+    let tx = 0;
+    let ty = 0;
+    if (def.targeted) {
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x! < 0 || y! < 0 || x! >= n || y! >= n) {
+        this.errorTo(playerId, 'err.power_target');
+        return;
+      }
+      tx = x!;
+      ty = y!;
+    } else {
+      // untargeted powers flash over the caster's town center
+      const tc = [...this.buildings.values()].find((b) => b.owner === playerId && b.type === 'town_center');
+      if (tc) { tx = tc.tileX + 1.5; ty = tc.tileY + 1.5; }
+    }
+    p.powersUsed.add(def.id);
+    const durTicks = Math.round((def.duration ?? 0) * 10);
+    const flash = 25; // ~2.5s of visuals for instant powers
+    const radius = def.radius ?? 4;
+    this.activePowers.push({
+      id: this.nextFxId++, power: def.id, owner: playerId, x: tx, y: ty, radius,
+      start: this.tick, end: this.tick + Math.max(durTicks, flash),
+    });
+
+    switch (def.kind) {
+      case 'strike':
+        if (def.damage) this.powerStrike(playerId, tx, ty, radius, def.damage, def.buildingMul ?? 1);
+        break; // over-time strikes tick in updatePowers
+      case 'heal':
+        for (const u of this.units.values()) {
+          if (u.owner === playerId && Math.hypot(u.x - tx, u.y - ty) <= radius) {
+            u.hp = Math.min(this.unitMaxHp(u), u.hp + (def.heal ?? 0));
+          }
+        }
+        for (const b of this.buildings.values()) {
+          if (b.owner !== playerId || b.progress < 1) continue;
+          const s = BUILDING_DEFS[b.type].size;
+          if (Math.hypot(b.tileX + s / 2 - tx, b.tileY + s / 2 - ty) <= radius + s / 2) {
+            b.hp = Math.min(BUILDING_DEFS[b.type].hp, b.hp + (def.heal ?? 0));
+          }
+        }
+        break;
+      case 'summon': {
+        const { unit, count } = def.summon!;
+        const start = nearestWalkableTile(this.grid, Math.floor(tx), Math.floor(ty));
+        if (!start) break;
+        const spots = collectSpreadTiles(this.grid, start.x, start.y, count);
+        for (const s of spots) {
+          const id = this.nextId++;
+          const nu = createUnit(id, playerId, unit, s.x + 0.5, s.y + 0.5);
+          nu.hp = this.unitMaxHp(nu);
+          this.units.set(id, nu);
+        }
+        break;
+      }
+      case 'resource':
+        for (const [k, v] of Object.entries(def.resources ?? {}) as [keyof typeof p.resources, number][]) {
+          p.resources[k] = k === 'favor' ? Math.min(FAVOR_CAP, p.resources[k] + v) : p.resources[k] + v;
+        }
+        break;
+      case 'gather_boost':
+        p.gatherBuff = { res: def.gather!.res, mul: def.gather!.mul, end: this.tick + durTicks };
+        break;
+      case 'speed':
+        p.speedBuff = { mul: def.speedMul ?? 1, end: this.tick + durTicks };
+        break;
+      case 'freeze':
+        for (const u of this.units.values()) {
+          if (!this.allied(u.owner, playerId) && Math.hypot(u.x - tx, u.y - ty) <= radius) {
+            u.frozenUntil = this.tick + durTicks;
+          }
+        }
+        break;
+      case 'shield':
+      case 'reveal':
+        break; // shield is read live in unitArmor; reveal is client-side fog
+    }
+
+    const msg: ServerMessage = { type: 'powerCast', by: playerId, byName: p.name, power: def.id, ...(def.targeted ? { x: tx, y: ty } : {}) };
+    for (const pl of this.players.values()) this.send(pl.id, msg);
+    for (const id of this.spectators) this.send(id, msg);
+  }
+
+  /** Damage every enemy unit (and building × mul) in the area. Divine damage
+   *  ignores armor. */
+  private powerStrike(owner: number, x: number, y: number, radius: number, dmg: number, buildingMul: number): void {
+    for (const u of [...this.units.values()]) {
+      if (this.allied(u.owner, owner) || !this.units.has(u.id)) continue;
+      if (Math.hypot(u.x - x, u.y - y) <= radius) this.hitUnit(u, dmg, 'crush', null, true);
+    }
+    if (buildingMul > 0) {
+      for (const b of [...this.buildings.values()]) {
+        if (this.allied(b.owner, owner)) continue;
+        const s = BUILDING_DEFS[b.type].size;
+        if (Math.hypot(b.tileX + s / 2 - x, b.tileY + s / 2 - y) <= radius + s / 2) this.hitBuilding(b, dmg * buildingMul);
+      }
+    }
+  }
+
+  /** Ongoing god powers (damage over time) + expiry. */
+  private updatePowers(dt: number): void {
+    if (this.activePowers.length === 0) return;
+    for (const a of this.activePowers) {
+      const def = POWERS[a.power];
+      if (def.kind === 'strike' && def.dps && this.tick < a.start + Math.round((def.duration ?? 0) * 10)) {
+        this.powerStrike(a.owner, a.x, a.y, a.radius, def.dps * dt, def.buildingMul ?? 1);
+      }
+    }
+    this.activePowers = this.activePowers.filter((a) => a.end > this.tick);
+  }
+
+  /** Favor income per civ + regeneration (myth units, Odin). */
+  private updateFavorAndRegen(dt: number): void {
+    const temples = new Map<number, number>();
+    const worshippers = new Map<number, number>();
+    for (const b of this.buildings.values()) {
+      if (b.type === 'temple' && b.progress >= 1) temples.set(b.owner, (temples.get(b.owner) ?? 0) + 1);
+    }
+    for (const u of this.units.values()) {
+      if (u.type === 'villager' && u.state === 'gathering' && u.gatherTargetId !== undefined) {
+        const t = this.buildings.get(u.gatherTargetId);
+        if (t && t.type === 'temple' && t.owner === u.owner) worshippers.set(u.owner, (worshippers.get(u.owner) ?? 0) + 1);
+      }
+    }
+    for (const p of this.players.values()) {
+      if (p.defeated || !p.civ) continue;
+      let rate = 0;
+      const nt = temples.get(p.id) ?? 0;
+      if (p.civ === 'greek') rate = Math.min(FAVOR_RULES.greekMaxWorshippers, worshippers.get(p.id) ?? 0) * FAVOR_RULES.greekPerWorshipper;
+      else if (p.civ === 'egyptian') rate = Math.min(FAVOR_RULES.egyptianMaxTemples, nt) * FAVOR_RULES.egyptianPerTemple;
+      else if (p.civ === 'norse') rate = nt * FAVOR_RULES.norsePerTemple;
+      if (rate > 0) p.resources.favor = Math.min(FAVOR_CAP, p.resources.favor + rate * dt);
+      if (p.gatherBuff && p.gatherBuff.end <= this.tick) p.gatherBuff = undefined;
+      if (p.speedBuff && p.speedBuff.end <= this.tick) p.speedBuff = undefined;
+    }
+    // regeneration (myth units with `regen`, Odin's human soldiers) — 1x/s
+    if (this.tick % 10 !== 0) return;
+    for (const u of this.units.values()) {
+      const p = this.players.get(u.owner);
+      const c = this.combatOf(u);
+      let regen = c.regen ?? 0;
+      if (p?.god && (c.cls === 'infantry' || c.cls === 'archer' || c.cls === 'cavalry' || c.cls === 'hero')) {
+        regen += MAJOR_GODS[p.god].bonus.regen ?? 0;
+      }
+      if (regen > 0) u.hp = Math.min(this.unitMaxHp(u), u.hp + regen);
+    }
   }
 
   private ownedUnits(playerId: number, unitIds: number[]): Unit[] {
@@ -1069,7 +1332,11 @@ export class Game {
     } else if (farm && farm.type === 'farm' && farm.owner === playerId && farm.progress >= 1) {
       for (const u of units) if (u.type === 'villager') this.startGatherFarm(u, farm);
     } else if (sheep && (sheep.owner === playerId || sheep.owner === SHEEP_WILD_OWNER)) {
-      for (const u of units) if (u.type === 'villager') this.startGatherSheep(u, sheep);
+      for (const u of units) if (u.type === 'villager') this.startGatherSheep(u, sheep, true);
+    } else if (farm && farm.type === 'temple' && farm.owner === playerId && farm.progress >= 1
+      && this.players.get(playerId)?.civ === 'greek') {
+      // AoM Greek: villagers worship at the Temple to generate favor
+      for (const u of units) if (u.type === 'villager') this.startWorship(u, farm);
     } else {
       this.errorTo(playerId, 'err.bad_gather_target');
     }
@@ -1101,16 +1368,39 @@ export class Game {
     }
   }
 
+  private startWorship(u: Unit, temple: Building): void {
+    this.clearTasks(u);
+    u.gatherTargetId = temple.id;
+    if (this.pathUnitAdjacentToSpread(u, temple.tileX, temple.tileY, BUILDING_DEFS.temple.size, temple.id)) {
+      u.state = 'movingToGather';
+    } else {
+      u.state = 'idle';
+    }
+  }
+
   /** Manda o aldeão abater/comer uma ovelha. Ela é passável (sem footprint):
    *  caminha até o tile dela. Abater = fixa o dono da ovelha no comedor. */
-  private startGatherSheep(u: Unit, sheep: Sheep): void {
+  /** `freshOrder`: a new gather command (player or bot). Only then is an
+   *  unpathable sheep rejected and remembered; continuing after a drop-off or
+   *  from a rally point keeps the original behavior. */
+  private startGatherSheep(u: Unit, sheep: Sheep, freshOrder = false): void {
     const resource: ResourceType = 'food';
     if (u.gatherResource !== resource) u.carryAmount = 0;
     this.clearTasks(u);
+    if (freshOrder && this.sheepBlocked(sheep.id)) {
+      u.state = 'idle';
+      return;
+    }
+    this.pathUnitTo(u, sheep.x, sheep.y);
+    if (freshOrder && u.path.length === 0 && Math.hypot(sheep.x - u.x, sheep.y - u.y) > 1.6) {
+      // no path: remember it so nobody keeps re-ordering this sheep
+      this.sheepUnreachableUntil.set(sheep.id, this.tick + 300);
+      u.state = 'idle';
+      return;
+    }
     u.gatherTargetId = sheep.id;
     u.gatherResource = resource;
     sheep.owner = u.owner; // sob abate, a ovelha vira sua na hora
-    this.pathUnitTo(u, sheep.x, sheep.y);
     u.state = 'movingToGather';
   }
 
@@ -1343,7 +1633,12 @@ export class Game {
       this.errorTo(playerId, 'err.requires_age', { age: req });
       return;
     }
-    const cost = UNIT_DEFS[unit].cost;
+    // AoM Temple: hero needs a civ; myth units need the minor god that grants them
+    if (!this.canTrainAtTemple(p, unit)) {
+      this.errorTo(playerId, 'err.myth_locked');
+      return;
+    }
+    const cost = unitStats(unit, p.civ, p.god).cost;
     if (!this.canAfford(p, cost)) {
       this.errorTo(playerId, 'err.no_resources');
       return;
@@ -1358,7 +1653,7 @@ export class Game {
     if (index < 0 || index >= b.queue.length) return;
     const item = b.queue.splice(index, 1)[0];
     const p = this.players.get(playerId);
-    if (p) this.refund(p, UNIT_DEFS[item.unit].cost);
+    if (p) this.refund(p, unitStats(item.unit, p.civ, p.god).cost);
   }
 
   private cmdSetRally(playerId: number, buildingId: number, x: number, y: number): void {
@@ -1426,7 +1721,8 @@ export class Game {
   private trainTimeFor(b: Building): number {
     // trainTime vem de BUILDING_DEFS via unit? Não — está em UNIT_DEFS? Checamos ambos.
     const head = b.queue[0];
-    return UNIT_TRAIN_TIME[head.unit];
+    const p = this.players.get(b.owner);
+    return unitStats(head.unit, p?.civ, p?.god).trainTime;
   }
 
   private findFreeSpotNear(bx: number, by: number, size: number, grid: Grid = this.grid): { x: number; y: number } | null {
@@ -1488,54 +1784,111 @@ export class Game {
     return Infinity;
   }
 
-  /** Ataque efetivo da unidade (base + upgrades do dono). */
+  /** Effective stats of a unit for its owner's civ + major god (shared). */
+  private stats(u: Unit) {
+    const p = this.players.get(u.owner);
+    return unitStats(u.type, p?.civ, p?.god);
+  }
+
+  /** Ataque efetivo da unidade (base civ/deus + upgrades do dono). */
   private unitAttack(u: Unit): number {
     const p = this.players.get(u.owner);
-    return UNIT_DEFS[u.type].attack + (p ? techBonus(p.techs, u.type).attack : 0);
+    return this.stats(u).attack + (p ? techBonus(p.techs, u.type).attack : 0);
   }
 
-  /** Blindagem efetiva (redução de dano) da unidade. */
+  /** FLAT damage reduction per hit: tech armor + god armor + active ward
+   *  powers. (Percent armor by damage type lives in the combat profile.) */
   private unitArmor(u: Unit): number {
     const p = this.players.get(u.owner);
-    return p ? techBonus(p.techs, u.type).armor : 0;
+    let flat = (p ? techBonus(p.techs, u.type).armor : 0) + this.stats(u).flatArmor;
+    for (const a of this.activePowers) {
+      const def = POWERS[a.power];
+      if (def.kind !== 'shield' || a.end <= this.tick || a.owner !== u.owner) continue;
+      if (Math.hypot(u.x - a.x, u.y - a.y) <= a.radius) flat += def.armor ?? 0;
+    }
+    return flat;
   }
 
-  /** Vida máxima efetiva (base + upgrades do dono). */
+  /** Vida máxima efetiva (base civ + upgrades do dono). */
   private unitMaxHp(u: Unit): number {
     const p = this.players.get(u.owner);
-    return UNIT_DEFS[u.type].hp + (p ? techBonus(p.techs, u.type).hp : 0);
+    return this.stats(u).hp + (p ? techBonus(p.techs, u.type).hp : 0);
   }
 
-  /** Alcance efetivo (base + upgrades do dono). */
+  /** Alcance efetivo (base civ + upgrades do dono). */
   private unitRange(u: Unit): number {
     const p = this.players.get(u.owner);
-    return UNIT_DEFS[u.type].range + (p ? techBonus(p.techs, u.type).range : 0);
+    return this.stats(u).range + (p ? techBonus(p.techs, u.type).range : 0);
+  }
+
+  private unitSpeed(u: Unit): number {
+    const p = this.players.get(u.owner);
+    const buff = p?.speedBuff && p.speedBuff.end > this.tick ? p.speedBuff.mul : 1;
+    return this.stats(u).speed * buff;
+  }
+
+  /** Combat profile (damage type, % armor, class) for the owner's civ. */
+  private combatOf(u: Unit): CombatDef {
+    return this.stats(u).combat;
+  }
+
+  /** AoM damage to a unit: raw × class counter × (1 − armor%[type]) − flat
+   *  armor, minimum 1. `attacker` null = tower/god power. Returns true if it died.
+   *  Norse attackers earn favor for the damage they deal. */
+  private hitUnit(target: Unit, raw: number, type: DamageType, attacker: Unit | null, ignoreArmor = false): boolean {
+    const tc = this.combatOf(target);
+    let dmg = raw;
+    if (attacker) dmg *= classBonus(this.combatOf(attacker), tc);
+    if (!ignoreArmor) dmg = dmg * (1 - armorVs(tc, type)) - this.unitArmor(target);
+    dmg = Math.max(1, dmg);
+    const applied = Math.min(dmg, Math.max(0, target.hp));
+    target.hp -= dmg;
+    if (attacker && attacker.type !== 'villager' && !this.allied(attacker.owner, target.owner)) {
+      const ap = this.players.get(attacker.owner);
+      if (ap?.civ === 'norse') ap.resources.favor = Math.min(FAVOR_CAP, ap.resources.favor + applied * FAVOR_RULES.norsePerDamage);
+    }
+    if (target.hp <= 0) {
+      this.units.delete(target.id);
+      this.retargetAttackersOf(target.id);
+      return true;
+    }
+    return false;
+  }
+
+  /** Damage to a building (no percent armor: AoM buildings resist hack/pierce,
+   *  modeled by each attacker's vsBuilding multiplier). */
+  private hitBuilding(b: Building, dmg: number): void {
+    b.hp -= dmg;
+    // registra "base do fulano apanhando" — bots ALIADOS protetores leem isto
+    const bs = BUILDING_DEFS[b.type].size;
+    this.recentAttacks.set(b.owner, { x: b.tileX + bs / 2, y: b.tileY + bs / 2, tick: this.tick });
+    if (b.hp <= 0 && this.buildings.has(b.id)) {
+      this.unblockFootprint(b.tileX, b.tileY, BUILDING_DEFS[b.type].size);
+      this.buildings.delete(b.id);
+      this.retargetAttackersOf(b.id);
+      this.checkTownCenterLoss(b.owner);
+    }
   }
 
   private dealDamage(u: Unit, targetId: number): void {
     const atk = this.unitAttack(u);
+    const combat = this.combatOf(u);
     const tu = this.units.get(targetId);
     if (tu) {
-      tu.hp -= Math.max(1, atk - this.unitArmor(tu)); // dano mínimo 1
-      if (tu.hp <= 0) {
-        this.units.delete(targetId);
-        this.retargetAttackersOf(targetId);
+      const tx = tu.x;
+      const ty = tu.y;
+      this.hitUnit(tu, atk, combat.dmg, u);
+      // splash: half damage to other enemies around the target
+      if (combat.splash) {
+        for (const o of [...this.units.values()]) {
+          if (o.id === targetId || this.allied(o.owner, u.owner)) continue;
+          if (Math.hypot(o.x - tx, o.y - ty) <= combat.splash) this.hitUnit(o, atk * 0.5, combat.dmg, u);
+        }
       }
       return;
     }
     const b = this.buildings.get(targetId);
-    if (b) {
-      b.hp -= atk; // prédios não têm blindagem de upgrade
-      // registra "base do fulano apanhando" — bots ALIADOS protetores leem isto
-      const bs = BUILDING_DEFS[b.type].size;
-      this.recentAttacks.set(b.owner, { x: b.tileX + bs / 2, y: b.tileY + bs / 2, tick: this.tick });
-      if (b.hp <= 0) {
-        this.unblockFootprint(b.tileX, b.tileY, BUILDING_DEFS[b.type].size);
-        this.buildings.delete(targetId);
-        this.retargetAttackersOf(targetId);
-        this.checkTownCenterLoss(b.owner);
-      }
-    }
+    if (b) this.hitBuilding(b, atk * (combat.vsBuilding ?? 1)); // prédios não têm blindagem de upgrade
   }
 
   private retargetAttackersOf(deadId: number): void {
@@ -1550,6 +1903,11 @@ export class Game {
   // ---------------- Update de unidade por tick ----------------
 
   private updateUnit(u: Unit, dt: number): void {
+    // AoM freeze powers: frozen units can't move or attack (they can be hit)
+    if (u.frozenUntil !== undefined) {
+      if (u.frozenUntil > this.tick) return;
+      u.frozenUntil = undefined;
+    }
     switch (u.state) {
       case 'idle':
         this.updateAutoAggro(u, dt);
@@ -1753,7 +2111,7 @@ export class Game {
 
   private advanceAlongPath(u: Unit, dt: number): void {
     if (u.path.length === 0) return;
-    let remaining = UNIT_DEFS[u.type].speed * dt;
+    let remaining = this.unitSpeed(u) * dt;
     while (remaining > 0 && u.path.length > 0) {
       const wp = u.path[0];
       const dx = wp.x + 0.5 - u.x;
@@ -1795,9 +2153,10 @@ export class Game {
     if (this.players.get(u.owner)?.difficulty === 'easy') return;
     if (u.aggroTimer > 0) return;
     u.aggroTimer = 0.5; // ~2x/s
-    const sight = UNIT_DEFS[u.type].sight;
+    const sight = this.stats(u).sight;
     const meNaval = isNavalUnit(u.type);
-    const meMelee = UNIT_DEFS[u.type].range <= 1.5;
+    const myRange = this.unitRange(u);
+    const meMelee = myRange <= 1.5;
     let bestId: number | null = null;
     let bestD = Infinity;
     for (const other of this.units.values()) {
@@ -1807,7 +2166,7 @@ export class Game {
       const otherNaval = isNavalUnit(other.type);
       if (!meNaval && meMelee && otherNaval) continue;
       const d = Math.hypot(other.x - u.x, other.y - u.y);
-      if (meNaval && !otherNaval && d > UNIT_DEFS[u.type].range) continue;
+      if (meNaval && !otherNaval && d > myRange) continue;
       if (d <= sight && d < bestD) {
         bestD = d;
         bestId = other.id;
@@ -1849,7 +2208,7 @@ export class Game {
       : sheep
         ? { x: sheep.x, y: sheep.y }
         : farm
-          ? this.nearestFarmTile(farm, u)
+          ? this.nearestFootprintTile(farm, u)
           : null;
     if (!pos) {
       // a fonte acabou enquanto vinha a caminho: emenda na próxima mais perto
@@ -1862,17 +2221,18 @@ export class Game {
     } else {
       // repath (alvo pode ter sido removido/mudou/andado)
       if (node && this.pathUnitAdjacentToSpread(u, node.tileX, node.tileY, 1, node.id)) return;
-      if (farm && this.pathUnitAdjacentToSpread(u, farm.tileX, farm.tileY, BUILDING_DEFS.farm.size, farm.id)) return;
+      if (farm && this.pathUnitAdjacentToSpread(u, farm.tileX, farm.tileY, BUILDING_DEFS[farm.type].size, farm.id)) return;
       if (sheep) {
         this.pathUnitTo(u, sheep.x, sheep.y);
         if (u.path.length > 0) return;
+        this.sheepUnreachableUntil.set(sheep.id, this.tick + 300);
       }
       u.state = 'idle';
     }
   }
 
-  private nearestFarmTile(farm: Building, u: Unit): { x: number; y: number } {
-    const size = BUILDING_DEFS.farm.size;
+  private nearestFootprintTile(farm: Building, u: Unit): { x: number; y: number } {
+    const size = BUILDING_DEFS[farm.type].size;
     const nx = Math.max(farm.tileX, Math.min(u.x, farm.tileX + size - 1));
     const ny = Math.max(farm.tileY, Math.min(u.y, farm.tileY + size - 1));
     return { x: nx + 0.5, y: ny + 0.5 };
@@ -1887,6 +2247,11 @@ export class Game {
     const node = this.nodes.get(targetId);
     const farm = this.buildings.get(targetId);
     const sheep = this.sheep.get(targetId);
+    if (farm && farm.type === 'temple') {
+      // worshipping: favor accrues in updateFavorAndRegen; nothing to carry
+      if (farm.owner !== u.owner || farm.progress < 1) u.state = 'idle';
+      return;
+    }
     if (!node && !(farm && farm.type === 'farm') && !sheep) {
       // fonte sumiu: tenta retarget mesmo recurso
       this.retargetGather(u);
@@ -1903,7 +2268,12 @@ export class Game {
       u.carryType = resource;
       u.carryAmount = 0;
     }
-    const gathered = Math.min(GATHER_RATE * gatherMultiplier(techs, resource) * dt, capacity, amountAvail);
+    // AoM: major god gather bonus (Ra) + timed gather powers (Rain, Prosperity…)
+    const gp = this.players.get(u.owner);
+    let godMul = 1;
+    if (gp?.god && u.type === 'villager' && MAJOR_GODS[gp.god].bonus.gather?.res === resource) godMul *= MAJOR_GODS[gp.god].bonus.gather!.mul;
+    if (gp?.gatherBuff && gp.gatherBuff.res === resource && gp.gatherBuff.end > this.tick) godMul *= gp.gatherBuff.mul;
+    const gathered = Math.min(GATHER_RATE * gatherMultiplier(techs, resource) * godMul * dt, capacity, amountAvail);
     u.carryAmount += gathered;
     if (node) {
       node.amount -= gathered;
@@ -1990,12 +2360,7 @@ export class Game {
         const dmg = buildingAttack(b.type, age, p?.techs);
         const arrows = 1 + (b.garrison?.length ?? 0); // +1 flecha por unidade dentro
         if (arrows <= 1) {
-          target.hp -= Math.max(1, dmg - this.unitArmor(target));
-          if (target.hp <= 0) {
-            this.units.delete(target.id);
-            this.retargetAttackersOf(target.id);
-            b.targetId = undefined;
-          }
+          if (this.hitUnit(target, dmg, 'pierce', null)) b.targetId = undefined;
         } else {
           // guarnecido: dispara nos N inimigos mais próximos (defesa de área)
           const enemies = [...this.units.values()]
@@ -2004,13 +2369,7 @@ export class Game {
             .filter((o) => o.d <= range)
             .sort((a, z) => a.d - z.d)
             .slice(0, arrows);
-          for (const { e } of enemies) {
-            e.hp -= Math.max(1, dmg - this.unitArmor(e));
-            if (e.hp <= 0) {
-              this.units.delete(e.id);
-              this.retargetAttackersOf(e.id);
-            }
-          }
+          for (const { e } of enemies) this.hitUnit(e, dmg, 'pierce', null);
           if (!this.units.has(target.id)) b.targetId = undefined;
         }
       }
@@ -2234,7 +2593,7 @@ export class Game {
     }
     u.attackCooldown -= dt;
     if (u.attackCooldown <= 0) {
-      u.attackCooldown = UNIT_DEFS[u.type].attackCooldown;
+      u.attackCooldown = this.stats(u).attackCooldown;
       this.dealDamage(u, targetId);
     }
   }
@@ -2261,21 +2620,13 @@ export class Game {
   }
 
   toPlayerInfos(): PlayerInfo[] {
-    return [...this.players.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, team: p.team }));
+    return [...this.players.values()].map((p) => ({
+      id: p.id, name: p.name, color: p.color, team: p.team,
+      ...(p.god ? { god: p.god, civ: p.civ } : {}),
+    }));
   }
 }
 
 function isWithinGrid(g: Grid, x: number, y: number): boolean {
   return x >= 0 && y >= 0 && x < g.size && y < g.size;
 }
-
-// Tempo de treino: vem de UNIT_DEFS (trainTime), não de BUILDING_DEFS.
-const UNIT_TRAIN_TIME: Record<UnitType, number> = {
-  villager: UNIT_DEFS.villager.trainTime,
-  swordsman: UNIT_DEFS.swordsman.trainTime,
-  archer: UNIT_DEFS.archer.trainTime,
-  knight: UNIT_DEFS.knight.trainTime,
-  fishing_boat: UNIT_DEFS.fishing_boat.trainTime,
-  war_galley: UNIT_DEFS.war_galley.trainTime,
-  transport: UNIT_DEFS.transport.trainTime,
-};

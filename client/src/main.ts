@@ -7,6 +7,7 @@ import { toast } from './ui';
 import { settings, saveSettings } from './settings';
 import { t, applyLang, AGE_NAMES, BUILDING_NAMES } from './i18n';
 import type { BuildingType } from '@age/shared';
+import { POWERS } from '@age/shared';
 import { getClientId, getSavedName, saveName } from './identity';
 import { NameScreen } from './screens/name';
 import { LobbyScreen } from './screens/lobby';
@@ -143,6 +144,7 @@ const roomScreen = new RoomScreen({
   onSetBroadcast: (on) => net.send({ type: 'setBroadcast', on }),
   onSetTerrain: (terrain) => net.send({ type: 'setTerrain', terrain }),
   onSetBotDifficulty: (botId, difficulty) => net.send({ type: 'setBotDifficulty', botId, difficulty }),
+  onSetGod: (playerId, god) => net.send({ type: 'setGod', playerId, god }),
 });
 
 function screenEl(name: ScreenName): HTMLElement {
@@ -327,6 +329,16 @@ function dispatch(msg: ServerMessage): void {
       gameScreen?.state.pings.push({ x: msg.x, y: msg.y, at: performance.now(), color: msg.color });
       break;
     }
+    case 'powerCast': {
+      // AoM: everyone hears when a god power is invoked (and sees it on the map)
+      const def = POWERS[msg.power as keyof typeof POWERS];
+      const name = def ? `${def.icon} ${def.name}` : msg.power;
+      gameScreen?.addChat('✨', t('myth.cast', { who: msg.byName, power: name }));
+      if (msg.x !== undefined && msg.y !== undefined) {
+        gameScreen?.state.pings.push({ x: msg.x, y: msg.y, at: performance.now(), color: def?.color ?? '#fde047' });
+      }
+      break;
+    }
     case 'snapshot': {
       if (gameScreen) {
         gameScreen.state.applySnapshot({
@@ -338,6 +350,7 @@ function dispatch(msg: ServerMessage): void {
           players: msg.players,
           market: msg.market,
           spectators: msg.spectators,
+          fx: msg.fx,
         });
       }
       break;

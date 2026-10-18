@@ -2,6 +2,20 @@
 // para servidor (validação/simulação) e cliente (UI, custos, pré-validação).
 
 import type { BuildingType, NodeType, Resources, ResourceType, UnitType } from './types';
+import {
+  applyOverrides,
+  CIVS,
+  COMBAT,
+  MAJOR_GODS,
+  MYTH_NAMES,
+  MYTH_UNIT_BASE,
+  SUMMON_ONLY,
+  type Civ,
+  type CombatDef,
+  type EffectiveUnitDef,
+  type MajorGodId,
+} from './mythology';
+import { AOM_OVERRIDES } from './aom-overrides';
 
 // ---------- Rede ----------
 export const GAME_PORT = 8080;
@@ -26,10 +40,10 @@ export const MAX_PLAYERS_PER_ROOM = 6;
 export const MAX_TEAMS = 3;
 // 1 permite treinar 100% sozinho (o host remove o bot automático da sala).
 export const MIN_PLAYERS_TO_START = 1;
-export const STARTING_RESOURCES: Resources = { food: 250, wood: 250, gold: 100, stone: 100 };
+export const STARTING_RESOURCES: Resources = { food: 250, wood: 250, gold: 100, stone: 100, favor: 0 };
 // Modo "Batalha/Rápido": começa cheio de recursos e numa era avançada, para ir
 // direto ao combate (partida rápida — e ótimo pra gravar o gameplay).
-export const BATTLE_STARTING_RESOURCES: Resources = { food: 20000, wood: 20000, gold: 20000, stone: 10000 };
+export const BATTLE_STARTING_RESOURCES: Resources = { food: 20000, wood: 20000, gold: 20000, stone: 10000, favor: 60 };
 export const BATTLE_STARTING_AGE = 3; // Idade dos Castelos: quartel/arquearia/estábulo já liberados
 export const START_VILLAGERS = 3;
 export const POP_CAP_MAX = 75;
@@ -61,6 +75,8 @@ export const UNIT_DEFS: Record<UnitType, UnitDef> = {
   fishing_boat: { hp: 60,  speed: 2.2, attack: 0,  range: 0,   attackCooldown: 1,   sight: 6, cost: { wood: 60 },            trainTime: 10, pop: 1 },
   war_galley:   { hp: 130, speed: 2.4, attack: 8,  range: 5.5, attackCooldown: 1.6, sight: 7, cost: { wood: 90, gold: 30 },  trainTime: 14, pop: 2 },
   transport:    { hp: 110, speed: 2.6, attack: 0,  range: 0,   attackCooldown: 1,   sight: 6, cost: { wood: 80 },            trainTime: 12, pop: 1 },
+  // ---- Age of Mythology layer: hero, myth units, summons (shared/src/mythology.ts) ----
+  ...MYTH_UNIT_BASE,
 };
 
 // ---------- Prédios ----------
@@ -96,6 +112,10 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   mining_camp:   { hp: 250,  size: 2, cost: { wood: 100 },             buildTime: 15, popProvided: 0, trains: [],              isDropOff: true,  ageReq: 1, accepts: ['gold', 'stone'] },
   // Porto: construído NA ÁGUA encostado na costa; deposita o peixe e treina barcos.
   dock:          { hp: 600,  size: 2, cost: { wood: 150 },             buildTime: 20, popProvided: 0, trains: ['fishing_boat', 'war_galley', 'transport'], isDropOff: true, ageReq: 1, accepts: ['food'] },
+  // AoM Temple: trains the hero and the myth units of the minor gods you picked;
+  // Greek villagers worship here for favor. Which of `trains` are available is
+  // decided per player by canTrainAt() (civ + minor gods).
+  temple:        { hp: 800,  size: 3, cost: { wood: 120, stone: 30 }, buildTime: 30, popProvided: 0, trains: TEMPLE_TRAINS(), isDropOff: false, ageReq: 1 },
 };
 
 // ---------- Naval ----------
@@ -116,6 +136,7 @@ export const BUILDING_VISION: Partial<Record<BuildingType, number>> = {
   town_center: 9,
   watch_tower: 9,
   dock: 7,
+  temple: 7,
 };
 export const SHEEP_VISION = 3;
 
@@ -165,7 +186,7 @@ export const TRAIN_QUEUE_MAX = 5;
 // ---------- Eras (estilo AoE2) ----------
 // Pesquisadas no Centro da Cidade; liberam unidades e mudam o visual dos prédios.
 export const MAX_AGE = 4;
-export const AGE_NAMES: string[] = ['', 'Idade das Trevas', 'Idade Feudal', 'Idade dos Castelos', 'Idade Imperial'];
+export const AGE_NAMES: string[] = ['', 'Era Arcaica', 'Era Clássica', 'Era Heroica', 'Era Mítica'];
 export const AGE_NUMERALS: string[] = ['', 'I', 'II', 'III', 'IV'];
 /** Custo para pesquisar a era N (índice = era destino) — valores do Age of
  *  Mythology (Clássica 400c; Heroica 800c+500o; Mítica 1000c+1000o): o último
@@ -210,6 +231,13 @@ export const UNIT_AGE_REQ: Record<UnitType, number> = {
   fishing_boat: 1,
   war_galley: 2, // barco de guerra a partir da Idade Feudal (estilo AoE)
   transport: 1,  // travessia cedo: o rio não pode trancar o mapa na Idade das Trevas
+  hero: 2,
+  // myth units: the minor god that unlocks them is picked AT that age-up, so the
+  // age requirement is implied by owning the god (see canTrainAt)
+  minotaur: 2, centaur: 2, sphinx: 2, anubite: 2, valkyrie: 2, einherjar: 2,
+  manticore: 3, hydra: 3, scorpion_man: 3, mummy: 3, frost_giant: 3, mountain_giant: 3,
+  colossus: 4, chimera: 4, avenger: 4, phoenix: 4, fire_giant: 4, fenris_wolf: 4,
+  shade: 99, serpent: 99, // summon-only
 };
 
 // ---------- Tecnologias / upgrades (pesquisados nos prédios) ----------
@@ -370,6 +398,81 @@ export const SHEEP_HERD_MIN = 2;      // rebanho perto do CV
 export const SHEEP_HERD_MAX = 4;
 export const SHEEP_SCATTER_CLUSTERS = 3; // grupinhos espalhados pelo mapa
 export const SHEEP_SCATTER_PER_CLUSTER = 2;
+
+// ---------- Age of Mythology: effective unit stats per civ / god ----------
+
+function TEMPLE_TRAINS(): UnitType[] {
+  return (Object.keys(MYTH_UNIT_BASE) as UnitType[]).filter((t) => !SUMMON_ONLY.has(t));
+}
+
+/** True for types introduced by the mythology layer (hero/myth/summons). */
+export function isMythType(t: UnitType): boolean {
+  return COMBAT[t]?.cls === 'myth';
+}
+
+const statsCache = new Map<string, EffectiveUnitDef & { flatArmor: number }>();
+
+/** Effective stats of a unit for a civ + major god: base UNIT_DEFS, then the
+ *  civ's version of the unit (Hoplite vs Spearman vs Ulfsark…), then static
+ *  god bonuses. Techs (techBonus) and timed god powers are added by the engine.
+ *  `flatArmor` = god flat armor (applied after % armor, like tech armor). */
+export function unitStats(type: UnitType, civ?: Civ, god?: MajorGodId): EffectiveUnitDef & { flatArmor: number } {
+  const key = `${type}|${civ ?? ''}|${god ?? ''}`;
+  const hit = statsCache.get(key);
+  if (hit) return hit;
+  const base = UNIT_DEFS[type];
+  const fl = civ ? CIVS[civ].units[type] : undefined;
+  const baseCombat = COMBAT[type];
+  const combat: CombatDef = {
+    ...baseCombat,
+    ...(fl?.combat ?? {}),
+    armor: (fl?.combat?.armor ?? baseCombat.armor) as [number, number, number],
+    bonus: fl?.combat?.bonus ?? baseCombat.bonus,
+  };
+  const out: EffectiveUnitDef & { flatArmor: number } = {
+    hp: fl?.hp ?? base.hp,
+    speed: fl?.speed ?? base.speed,
+    attack: fl?.attack ?? base.attack,
+    range: fl?.range ?? base.range,
+    attackCooldown: fl?.attackCooldown ?? base.attackCooldown,
+    sight: fl?.sight ?? base.sight,
+    cost: { ...(fl?.cost ?? base.cost) },
+    trainTime: fl?.trainTime ?? base.trainTime,
+    pop: fl?.pop ?? base.pop,
+    combat,
+    name: fl?.name ?? MYTH_NAMES[type] ?? type,
+    icon: fl?.icon,
+    flatArmor: 0,
+  };
+  const b = god ? MAJOR_GODS[god].bonus : undefined;
+  if (b) {
+    if (b.attack && b.attack.cls === combat.cls) out.attack += b.attack.add;
+    if (b.speed && b.speed.cls === combat.cls) out.speed *= b.speed.mul;
+    if (b.flatArmor && b.flatArmor.cls === combat.cls) out.flatArmor += b.flatArmor.add;
+    if (b.mythFavorDiscount && combat.cls === 'myth' && out.cost.favor) {
+      out.cost.favor = Math.round(out.cost.favor * (1 - b.mythFavorDiscount));
+    }
+    if (b.heroDiscount && type === 'hero') {
+      for (const k of Object.keys(out.cost) as (keyof Resources)[]) {
+        out.cost[k] = Math.round((out.cost[k] ?? 0) * (1 - b.heroDiscount));
+      }
+    }
+  }
+  statsCache.set(key, out);
+  return out;
+}
+
+/** Tech cost after god discounts (Isis). */
+export function techCostFor(tech: TechDef, god?: MajorGodId): Partial<Resources> {
+  const d = god ? MAJOR_GODS[god].bonus.techDiscount ?? 0 : 0;
+  if (!d) return tech.cost;
+  const out: Partial<Resources> = {};
+  for (const [k, v] of Object.entries(tech.cost) as [keyof Resources, number][]) out[k] = Math.round(v * (1 - d));
+  return out;
+}
+
+/** Imported original data (if any) replaces approximations at load. */
+export const AOM_DATA_APPLIED: string[] = applyOverrides(AOM_OVERRIDES, UNIT_DEFS);
 
 // ---------- Jogadores ----------
 export const PLAYER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#eab308', '#a855f7', '#06b6d4'];

@@ -30,7 +30,14 @@ import {
   techBonus,
   tradeBuyCost,
   tradeSellGain,
+  CIVS,
+  MAJOR_GODS,
+  MINOR_GODS,
+  minorGodOptions,
+  POWERS,
+  techCostFor,
 } from '@age/shared';
+import type { CostKey, MinorGodId, PowerId } from '@age/shared';
 import {
   AGE_NAMES,
   BUILDING_DESCS,
@@ -56,7 +63,10 @@ export interface HudDeps {
   onBuild: (type: BuildingType) => void;
   onTrain: (buildingId: number, unit: UnitType) => void;
   onCancelTrain: (buildingId: number, index: number) => void;
-  onAdvanceAge: () => void;
+  /** AoM: `minorGod` = which of the next age's two minor gods to worship. */
+  onAdvanceAge: (minorGod?: string) => void;
+  /** AoM: invoke a god power (targeted ones arm map targeting). */
+  onCastPower: (power: string) => void;
   onResearch: (buildingId: number, techId: string) => void;
   onTrade: (action: 'buy' | 'sell', resource: 'food' | 'wood' | 'stone') => void;
   onChat: (text: string) => void;
@@ -66,7 +76,7 @@ export interface HudDeps {
   getPlacement: () => BuildingType | null;
 }
 
-const BUILD_ORDER: BuildingType[] = ['house', 'farm', 'mill', 'lumber_camp', 'mining_camp', 'dock', 'barracks', 'archery_range', 'stable', 'blacksmith', 'market', 'wall', 'watch_tower', 'town_center'];
+const BUILD_ORDER: BuildingType[] = ['house', 'farm', 'mill', 'lumber_camp', 'mining_camp', 'dock', 'barracks', 'archery_range', 'stable', 'blacksmith', 'market', 'temple', 'wall', 'watch_tower', 'town_center'];
 const RES_ORDER: ResourceType[] = ['food', 'wood', 'gold', 'stone'];
 
 /** Ícones da barra de recursos DESENHADOS (SVG inline). Emojis de madeira/ouro/
@@ -150,6 +160,13 @@ export class Hud {
   private prodResFill: HTMLElement | null = null;
   /** Botões de comércio do Mercado ("sell:food", "buy:wood", ...). */
   private tradeBtns = new Map<string, HTMLButtonElement>();
+  // ---- Age of Mythology ----
+  private favorEl: HTMLElement;
+  private favorVal: HTMLElement;
+  private powerBar = el('div', 'panel power-bar hidden');
+  private powerSig = '';
+  /** Age-up buttons, one per minor god option (TC panel). */
+  private godBtns: { god: MinorGodId; btn: HTMLButtonElement }[] = [];
 
   constructor(private gs: GameState, private deps: HudDeps) {
     // ---- barra superior de recursos ----
@@ -164,6 +181,12 @@ export class Hud {
       this.resVals[r] = val;
       top.appendChild(span);
     }
+    // AoM favor (shown only for players with a god)
+    this.favorEl = el('span', 'res favor hidden');
+    this.favorEl.append('✨ ');
+    this.favorVal = el('b', '', '0');
+    this.favorEl.appendChild(this.favorVal);
+    top.appendChild(this.favorEl);
     this.popEl = el('span', 'res pop');
     this.popEl.title = t('hud.pop_tip');
     this.popEl.append('👥 ');
@@ -187,6 +210,7 @@ export class Hud {
     this.idleBtn.addEventListener('click', () => this.deps.onIdleVillager());
     top.appendChild(this.idleBtn);
     this.el.appendChild(top);
+    this.el.appendChild(this.powerBar);
 
     // ---- barra de comando inferior (estilo AoE2): comandos à esquerda,
     //      seleção + produção no centro, minimapa à direita ----
@@ -283,6 +307,14 @@ export class Hud {
       const txt = String(Math.floor(me.resources?.[r] ?? 0));
       if (val.textContent !== txt) val.textContent = txt;
     }
+    const civ = this.gs.civOf(this.gs.you);
+    this.favorEl.classList.toggle('hidden', !civ);
+    if (civ) {
+      const fv = String(Math.floor(me.resources?.favor ?? 0));
+      if (this.favorVal.textContent !== fv) this.favorVal.textContent = fv;
+      this.favorEl.title = t('myth.favor_tip', { how: CIVS[civ].favorHow });
+    }
+    this.updatePowerBar();
     const popTxt = `${me.pop}/${me.popCap}`;
     if (this.popVal.textContent !== popTxt) this.popVal.textContent = popTxt;
     this.popEl.classList.toggle('full', me.pop >= me.popCap);
@@ -301,6 +333,37 @@ export class Hud {
     if (ageTxt !== this.ageTxtCache) {
       this.ageTxtCache = ageTxt;
       this.ageVal.textContent = ageTxt;
+    }
+  }
+
+  /** AoM god-power buttons: major god's power + one per minor god. */
+  private updatePowerBar(): void {
+    const me = this.gs.me();
+    const god = this.gs.godOf(this.gs.you);
+    if (!me || !god) {
+      this.powerBar.classList.add('hidden');
+      return;
+    }
+    const owned: PowerId[] = [MAJOR_GODS[god].power, ...((me.minorGods ?? []) as MinorGodId[]).map((g) => MINOR_GODS[g]?.power).filter(Boolean)];
+    const used = new Set(me.powersUsed ?? []);
+    const sig = owned.map((p) => `${p}:${used.has(p) ? 1 : 0}`).join(',');
+    if (sig === this.powerSig) return;
+    this.powerSig = sig;
+    this.powerBar.innerHTML = '';
+    this.powerBar.classList.remove('hidden');
+    const head = el('span', 'power-head', `${MAJOR_GODS[god].icon} ${MAJOR_GODS[god].name}`);
+    head.title = MAJOR_GODS[god].bonus.text;
+    this.powerBar.appendChild(head);
+    for (const id of owned) {
+      const def = POWERS[id];
+      const btn = el('button', 'btn power-btn', def.icon);
+      const isUsed = used.has(id);
+      btn.classList.toggle('used', isUsed);
+      btn.disabled = isUsed;
+      btn.title = isUsed ? t('myth.power_used', { name: def.name }) : t('myth.power_tip', { name: def.name, desc: def.desc });
+      btn.dataset.power = id;
+      btn.addEventListener('click', () => { if (!isUsed) this.deps.onCastPower(id); });
+      this.powerBar.appendChild(btn);
     }
   }
 
@@ -388,7 +451,8 @@ export class Hud {
     const maxHp = (def?.hp ?? u.hp) + bonuses.hp;
     const attack = (def?.attack ?? 0) + bonuses.attack;
     const armor = bonuses.armor;
-    this.selPanel.appendChild(this.titleRow(UNIT_ICONS[u.type] ?? '❔', UNIT_NAMES[u.type] ?? u.type, this.gs.colorOf(u.owner)));
+    const civName = this.gs.civOf(u.owner) ? this.gs.statsFor(u.type, u.owner).name : undefined;
+    this.selPanel.appendChild(this.titleRow(this.gs.statsFor(u.type, u.owner).icon ?? UNIT_ICONS[u.type] ?? '❔', civName ?? UNIT_NAMES[u.type] ?? u.type, this.gs.colorOf(u.owner)));
     this.selPanel.appendChild(this.hpBar(u.hp, maxHp));
     this.selPanel.appendChild(el('div', 'sel-line', `⚔ ${attack}   ❤ ${maxHp}   🛡 ${armor}`));
     if (u.owner !== this.gs.you) {
@@ -506,7 +570,9 @@ export class Hud {
         // O N entra na chave pro painel reconstruir quando a multi-seleção
         // muda de tamanho (senão o "×N" do título ficaria desatualizado).
         const n = gs.selectedOwnBuildings().filter((x) => x.type === b.type && (x.progress ?? 1) >= 1).length;
-        return { key: `train:${b.id}x${n}`, building: b };
+        // AoM: the temple's buttons and the TC's god choices change with the pantheon/age
+        const myth = b.type === 'temple' || b.type === 'town_center' ? `:${(gs.me()?.minorGods ?? []).join('/')}:${gs.me()?.age ?? 1}` : '';
+        return { key: `train:${b.id}x${n}${myth}`, building: b };
       }
       if ((b.progress ?? 1) < 1) return { key: 'hint:construction' };
       if (b.type === 'farm') return { key: 'hint:farm' };
@@ -545,6 +611,7 @@ export class Hud {
     this.prodTxt = null;
     this.prodFill = null;
     this.ageBtn = null;
+    this.godBtns = [];
     this.prodAgeRow = null;
     this.prodAgeTxt = null;
     this.prodAgeFill = null;
@@ -580,7 +647,7 @@ export class Hud {
     if (ctx.key.startsWith('train:') && ctx.building) {
       const b = ctx.building;
       const def = BUILDING_DEFS[b.type];
-      const trains = def?.trains ?? [];
+      const trains = (def?.trains ?? []).filter((u) => this.trainVisible(b.type, u));
       const techs = TECH_DEFS.filter((t) => t.building === b.type);
       this.trainBuildingId = b.id;
       // Multi-seleção (duplo-clique): todos os prédios próprios PRONTOS do
@@ -595,8 +662,9 @@ export class Hud {
         if (!udef) continue;
         // tile quadrado só com o ícone; nome/custo/descrição na caixa de ajuda
         const btn = el('button', 'btn cmd-tile');
-        btn.appendChild(el('span', 'ico', UNIT_ICONS[unit]));
-        btn.dataset.tipTitle = t('hud.unit_cost', { unit: UNIT_NAMES[unit], cost: costLongText(udef.cost), time: udef.trainTime });
+        const st = this.gs.statsFor(unit, this.gs.you);
+        btn.appendChild(el('span', 'ico', st.icon ?? UNIT_ICONS[unit]));
+        btn.dataset.tipTitle = t('hud.unit_cost', { unit: this.unitLabel(unit), cost: costLongText(st.cost), time: st.trainTime });
         btn.dataset.tipDesc = `${UNIT_DESCS[unit] ?? ''} ${t('hud.shift_train5')}`;
         // Shift+clique: enfileira 5 (AoE2). Com vários prédios do mesmo tipo
         // selecionados, enfileira em cada um deles.
@@ -651,8 +719,19 @@ export class Hud {
         }
         this.actPanel.appendChild(box);
       }
-      // Centro da Cidade: botão de avançar de era (estilo AoE2)
-      if (b.type === 'town_center') {
+      // AoM: age-up = choose one of the next age's two minor gods
+      const myCiv = this.gs.civOf(this.gs.you);
+      const myAgeNow = this.gs.me()?.age ?? 1;
+      if (b.type === 'town_center' && myCiv && myAgeNow < MAX_AGE) {
+        this.godBtns = [];
+        for (const g of minorGodOptions(myCiv, myAgeNow + 1)) {
+          const btn = el('button', 'btn cmd-btn age-btn god-btn');
+          btn.addEventListener('click', () => this.deps.onAdvanceAge(g.id));
+          this.godBtns.push({ god: g.id, btn });
+          this.actPanel.appendChild(btn);
+        }
+      } else if (b.type === 'town_center') {
+        // Centro da Cidade: botão de avançar de era (estilo AoE2)
         const btn = el('button', 'btn cmd-btn age-btn');
         btn.dataset.tipTitle = t('hud.advance_age');
         btn.dataset.tipDesc = t('hud.advance_age_desc');
@@ -660,6 +739,7 @@ export class Hud {
         this.ageBtn = btn;
         this.actPanel.appendChild(btn);
       }
+      if (b.type === 'temple' && myCiv === 'greek') this.actPanel.appendChild(el('div', 'hint', t('myth.worship_hint')));
       // centro da barra: produção/pesquisa
       this.prodPanel.appendChild(el('div', 'act-title', trains.length ? t('hud.production') : t('hud.research_head')));
       if (trains.length) {
@@ -744,15 +824,43 @@ export class Hud {
       const myAge = me?.age ?? 1;
       const queue = Array.isArray(b.queue) ? b.queue : [];
       for (const [unit, btn] of this.trainBtns) {
-        const udef = UNIT_DEFS[unit];
+        const udef = UNIT_DEFS[unit] ? this.gs.statsFor(unit, this.gs.you) : undefined;
         const req = UNIT_AGE_REQ[unit] ?? 1;
         const locked = myAge < req;
         btn.classList.toggle('off', !udef || locked || !this.canAfford(udef.cost) || queue.length >= TRAIN_QUEUE_MAX);
         btn.classList.toggle('locked', locked);
         if (udef) {
           btn.dataset.tipTitle = locked
-            ? t('hud.unit_age_locked', { unit: UNIT_NAMES[unit], age: AGE_NAMES[req] })
-            : t('hud.unit_cost', { unit: UNIT_NAMES[unit], cost: costLongText(udef.cost), time: udef.trainTime });
+            ? t('hud.unit_age_locked', { unit: this.unitLabel(unit), age: AGE_NAMES[req] })
+            : t('hud.unit_cost', { unit: this.unitLabel(unit), cost: costLongText(udef.cost), time: udef.trainTime });
+        }
+      }
+      // AoM minor-god age-up buttons
+      if (this.godBtns.length && me) {
+        const cost = AGE_COSTS[myAge + 1] ?? {};
+        const needB = buildingsToAdvance(myAge);
+        const have = new Set<BuildingType>();
+        for (const bb of this.gs.buildings.values()) {
+          if (bb.owner === this.gs.you && bb.progress >= 1 && countsForAgeUp(bb.type, myAge)) have.add(bb.type);
+        }
+        for (const { god, btn } of this.godBtns) {
+          const g = MINOR_GODS[god];
+          const desc = t('myth.choose_god_desc', { god: g.name, myth: this.unitLabel(g.myth), power: POWERS[g.power].name, cost: costLongText(cost) });
+          btn.dataset.tipTitle = `${g.icon} ${g.name}`;
+          btn.dataset.tipDesc = desc;
+          let txt: string;
+          if (me.ageProgress !== undefined) {
+            txt = me.ageGod === god ? t('hud.age_researching', { age: AGE_NAMES[myAge + 1] }) : `${g.icon} ${g.name}`;
+            btn.disabled = true;
+          } else if (have.size < needB) {
+            const req = needB > 1 ? t('hud.buildings_diff', { n: needB }) : t('hud.one_building');
+            txt = `${g.icon} ${g.name} — ${t('hud.age_need', { age: AGE_NAMES[myAge + 1], req, have: have.size, need: needB })}`;
+            btn.disabled = true;
+          } else {
+            txt = `${g.icon} ${t('myth.choose_god', { age: AGE_NAMES[myAge + 1], god: g.name })} (${costText(cost)})`;
+            btn.disabled = !this.canAfford(cost);
+          }
+          if (btn.textContent !== txt) btn.textContent = txt;
         }
       }
       // botão de avançar de era (só existe no Centro da Cidade)
@@ -801,7 +909,7 @@ export class Hud {
         const ageLocked = myAge < tech.ageReq;
         const prereqMissing = !!tech.prereq && !myTechs.includes(tech.prereq);
         const busy = b.research !== undefined;
-        btn.classList.toggle('off', done || ageLocked || prereqMissing || busy || !this.canAfford(tech.cost));
+        btn.classList.toggle('off', done || ageLocked || prereqMissing || busy || !this.canAfford(techCostFor(tech, this.gs.godOf(this.gs.you))));
         btn.classList.toggle('researched', done);
         btn.classList.toggle('locked', !done && (ageLocked || prereqMissing));
         btn.dataset.tipTitle = done
@@ -810,7 +918,7 @@ export class Hud {
             ? t('hud.tech_age_locked', { tech: techName(tech.id), age: AGE_NAMES[tech.ageReq] })
             : prereqMissing
               ? t('hud.tech_prereq', { tech: techName(tech.id), prereq: techName(tech.prereq ?? '') })
-              : t('hud.tech_cost', { tech: techName(tech.id), cost: costLongText(tech.cost), time: tech.time });
+              : t('hud.tech_cost', { tech: techName(tech.id), cost: costLongText(techCostFor(tech, this.gs.godOf(this.gs.you))), time: tech.time });
       }
       // botões de comércio do Mercado: preço ao vivo + disponibilidade
       if (this.tradeBtns.size > 0 && me?.resources) {
@@ -850,8 +958,8 @@ export class Hud {
         this.queueEl.innerHTML = '';
         this.headFill = null;
         queue.forEach((item, index) => {
-          const q = el('div', 'queue-item', UNIT_ICONS[item.unit] ?? '❔');
-          q.title = t('hud.queue_cancel', { unit: UNIT_NAMES[item.unit] ?? item.unit });
+          const q = el('div', 'queue-item', this.gs.statsFor(item.unit, this.gs.you).icon ?? UNIT_ICONS[item.unit] ?? '❔');
+          q.title = t('hud.queue_cancel', { unit: this.unitLabel(item.unit) });
           q.addEventListener('click', () => this.deps.onCancelTrain(this.trainBuildingId, index));
           if (index === 0) {
             const fill = el('div', 'qfill');
@@ -868,7 +976,7 @@ export class Hud {
       if (this.prodTxt && this.prodFill) {
         if (head) {
           const pct = Math.round(Math.max(0, Math.min(1, head.progress)) * 100);
-          this.prodTxt.textContent = t('hud.creating', { unit: UNIT_NAMES[head.unit] ?? head.unit, pct });
+          this.prodTxt.textContent = t('hud.creating', { unit: this.unitLabel(head.unit), pct });
           this.prodFill.style.width = `${pct}%`;
         } else {
           this.prodTxt.textContent = t('hud.idle');
@@ -898,10 +1006,25 @@ export class Hud {
     return `${parts.join(', ')}${who} • ${costLongText(tech.cost)} • ${tech.time}s`;
   }
 
-  private canAfford(cost: Partial<Record<ResourceType, number>>): boolean {
+  /** Name of a unit type as MY civ calls it (Hoplite / Spearman / Ulfsark…). */
+  private unitLabel(type: UnitType): string {
+    return this.gs.civOf(this.gs.you) ? this.gs.statsFor(type, this.gs.you).name : (UNIT_NAMES[type] ?? type);
+  }
+
+  /** Which units a building offers. AoM Temple: the hero (if you have a civ)
+   *  and only the myth units of minor gods you picked. */
+  private trainVisible(building: BuildingType, unit: UnitType): boolean {
+    if (building !== 'temple') return true;
+    if (!this.gs.civOf(this.gs.you)) return false;
+    if (unit === 'hero') return true;
+    const mine = (this.gs.me()?.minorGods ?? []) as MinorGodId[];
+    return mine.some((g) => MINOR_GODS[g]?.myth === unit);
+  }
+
+  private canAfford(cost: Partial<Record<CostKey, number>>): boolean {
     const me = this.gs.me();
     if (!me || !me.resources) return false;
-    for (const [r, v] of Object.entries(cost) as [ResourceType, number][]) {
+    for (const [r, v] of Object.entries(cost) as [CostKey, number][]) {
       if ((me.resources[r] ?? 0) < (v ?? 0)) return false;
     }
     return true;

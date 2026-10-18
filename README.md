@@ -11,6 +11,18 @@ A **browser-based multiplayer real-time strategy (RTS)** game inspired by the cl
 
 🌍 **Languages:** the whole game — menus, in-game HUD, and messages — is available in **English, Portuguese, and Spanish**. It's auto-detected by your region and can be switched anytime from the in-game Options menu (the gear icon).
 
+
+## Age of Mythology mode (6 players)
+
+Up to **6 players** per room (humans or bots, free-for-all or up to 3 teams). In the room, click your **god chip** to pick a major god: it decides your civilization (Greek, Egyptian or Norse), a passive bonus and your first god power.
+
+- **Ages:** Archaic → Classical → Heroic → Mythic. Each age-up asks you to choose one of two **minor gods**, which unlocks a **myth unit** at the **Temple** and a **god power**.
+- **Favor** pays for myth units. Greeks earn it by worshipping at the Temple (right-click it with villagers), Egyptians from each Temple, Norse by fighting.
+- **God powers** sit in the bar under the resources. Each one can be used once per game; targeted ones are aimed by clicking the map (Esc cancels).
+- **Counters:** infantry beats cavalry, cavalry beats archers, archers beat infantry, heroes deal ×3 to myth units.
+
+Stats are **approximations** of Age of Mythology's design until you import the original data from a copy you own. See **[docs/AOM_DATA.md](docs/AOM_DATA.md)**.
+
 ## Requirements
 
 - Node.js **20+**

@@ -32,10 +32,12 @@ export interface UIState {
   wallDrag: { x: number; y: number } | null;
   /** Marcadores de ordem recentes (podados pelo renderer). */
   orders: OrderMarker[];
+  /** AoM: god power waiting for a map target (PowerId), or null. */
+  powerTarget: string | null;
 }
 
 export function createUIState(): UIState {
-  return { placement: null, mouseX: 0, mouseY: 0, hasMouse: false, boxRect: null, wallDrag: null, orders: [] };
+  return { placement: null, mouseX: 0, mouseY: 0, hasMouse: false, boxRect: null, wallDrag: null, orders: [], powerTarget: null };
 }
 
 /** Tiles (1x1) de uma linha de muralha do início do arrasto até o cursor. Segue

@@ -2,7 +2,7 @@
 // (Jogadores | Configuração da partida), ações centrais e chat embaixo. Foco desktop.
 
 import type { BotDifficulty, GameMode, RoomPlayer, TerrainKind } from '@age/shared';
-import { MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START } from '@age/shared';
+import { MAJOR_GOD_IDS, MAJOR_GODS, MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START } from '@age/shared';
 import { el } from '../ui';
 import { t } from '../i18n';
 import { TERRAIN_THUMB_SVG } from './terrainThumbs';
@@ -20,7 +20,12 @@ export interface RoomScreenDeps {
   onSetBroadcast: (on: boolean) => void;
   onSetTerrain: (terrain: TerrainKind) => void;
   onSetBotDifficulty: (botId: number, difficulty: BotDifficulty) => void;
+  /** AoM: pick a major god (own slot, or a bot's if host). */
+  onSetGod: (playerId: number, god: string) => void;
 }
+
+/** Order the god chip cycles through. */
+const GOD_CYCLE: string[] = ['random', ...MAJOR_GOD_IDS];
 
 const DIFFICULTIES: BotDifficulty[] = ['easy', 'normal', 'hard', 'expert'];
 
@@ -367,6 +372,18 @@ export class RoomScreen {
       tb.disabled = !meHost;
       tb.addEventListener('click', () => this.deps.onSetTeam(p.id, (team + 1) % (MAX_TEAMS + 1)));
       meta.appendChild(tb);
+      // AoM major god: shows god + civ; players change their own, host changes bots'
+      const god = p.god ?? 'random';
+      const gdef = god !== 'random' ? MAJOR_GODS[god as keyof typeof MAJOR_GODS] : undefined;
+      const gb = el('button', `god-chip ${gdef ? `civ-${gdef.civ}` : 'civ-random'}`,
+        gdef ? `${gdef.icon} ${gdef.name} · ${t(`myth.civ_${gdef.civ}`)} ▾` : `🎲 ${t('myth.random')} ▾`);
+      gb.title = gdef ? `${t('myth.god_tip')}\n${gdef.name}: ${gdef.bonus.text}` : t('myth.god_tip');
+      gb.disabled = !(p.id === this.myId || (p.isBot && meHost));
+      gb.addEventListener('click', () => {
+        const next = GOD_CYCLE[(GOD_CYCLE.indexOf(god) + 1) % GOD_CYCLE.length];
+        this.deps.onSetGod(p.id, next);
+      });
+      meta.appendChild(gb);
       if (p.isHost) {
         meta.appendChild(el('span', 'crown', '♛'));
       } else {

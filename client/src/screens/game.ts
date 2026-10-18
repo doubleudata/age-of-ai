@@ -1,7 +1,7 @@
 // Tela 4: Jogo — canvas fullscreen + HUD, câmera, input e renderização.
 
 import type { GameCommand, MapData, PlayerInfo } from '@age/shared';
-import { BUILDING_DEFS } from '@age/shared';
+import { BUILDING_DEFS, POWERS } from '@age/shared';
 import { GameState } from '../state';
 import { el } from '../ui';
 import { t } from '../i18n';
@@ -94,7 +94,13 @@ export class GameScreen {
       onBuild: (type) => this.input.startPlacement(type),
       onTrain: (buildingId, unit) => this.deps.onCommand({ kind: 'train', buildingId, unit }),
       onCancelTrain: (buildingId, index) => this.deps.onCommand({ kind: 'cancelTrain', buildingId, index }),
-      onAdvanceAge: () => this.deps.onCommand({ kind: 'advanceAge' }),
+      onAdvanceAge: (minorGod) => this.deps.onCommand({ kind: 'advanceAge', ...(minorGod ? { minorGod } : {}) }),
+      onCastPower: (power) => {
+        const def = POWERS[power as keyof typeof POWERS];
+        if (!def) return;
+        if (def.targeted) this.input.startPowerTargeting(power);
+        else this.deps.onCommand({ kind: 'castPower', power });
+      },
       onResearch: (buildingId, techId) => this.deps.onCommand({ kind: 'research', buildingId, techId }),
       onTrade: (action, resource) => this.deps.onCommand({ kind: 'trade', action, resource }),
       onChat: (text) => this.deps.onChat(text),

@@ -83,6 +83,11 @@ let minD = Infinity;
 for (let i = 0; i < spawns.length; i++) for (let j = i + 1; j < spawns.length; j++) minD = Math.min(minD, Math.hypot(spawns[i][0] - spawns[j][0], spawns[i][1] - spawns[j][1]));
 console.log(`  town centers: ${JSON.stringify(spawns)}  min distance=${minD.toFixed(1)} tiles`);
 check('town centers are well separated (>= 30 tiles)', minD >= 30);
+const gods = joined[0].start.players.map((p) => `${p.name}:${p.god}/${p.civ}`);
+console.log(`  gods: ${gods.join(' ')}`);
+check('every player got a major god + civ at game start', joined[0].start.players.every((p) => p.god && p.civ));
+const favorKnown = joined.every((c) => typeof c.last.players.find((p) => p.id === c.id)?.resources?.favor === 'number');
+check('snapshots carry favor for every player', favorKnown);
 const colors = new Set(joined[0].start.players.map((p) => p.color));
 check(`each player has a distinct color (${colors.size}/${joined.length})`, colors.size === joined.length);
 

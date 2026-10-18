@@ -3,6 +3,11 @@
 
 import { SHEEP_FOOD, SHEEP_WILD_OWNER, UNIT_DEFS } from '@age/shared';
 import type {
+  Civ,
+  MajorGodId,
+  MinorGodId,
+  PowerId,
+  ResourceType as GatherRes,
   BotDifficulty,
   BuildingType,
   NodeType,
@@ -49,6 +54,8 @@ export interface Unit {
   aggroTimer: number;
   pathTargetX: number; // posição do alvo quando o caminho foi calculado
   pathTargetY: number;
+  /** AoM freeze powers: the unit can't act until this tick. */
+  frozenUntil?: number;
 }
 
 export interface Building {
@@ -106,8 +113,20 @@ export interface GamePlayer {
   defeated: boolean;
   /** Era atual (1..MAX_AGE). */
   age: number;
-  /** Pesquisa de era em andamento (destino + segundos decorridos). */
-  ageResearch?: { target: number; elapsed: number };
+  /** Pesquisa de era em andamento (destino + segundos decorridos). AoM: `god`
+   *  = minor god chosen for that age (granted when the research completes). */
+  ageResearch?: { target: number; elapsed: number; god?: MinorGodId };
+  /** AoM civilization + major god. */
+  /** Absent only in legacy/headless tests (generic Age of AI units). */
+  civ?: Civ;
+  god?: MajorGodId;
+  /** Minor gods picked at each age-up (in order). */
+  minorGods: MinorGodId[];
+  /** God powers already invoked (each is single-use). */
+  powersUsed: Set<PowerId>;
+  /** Timed god-power buffs (end = tick). */
+  gatherBuff?: { res: GatherRes; mul: number; end: number };
+  speedBuff?: { mul: number; end: number };
   /** Tecnologias/upgrades já pesquisados. */
   techs: Set<string>;
   /** Só bots: nível de dificuldade (dirige a IA). Humanos = undefined. */

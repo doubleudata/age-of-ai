@@ -9,6 +9,7 @@ import type {
   NodeSnap,
   PlayerInfo,
   PlayerSnap,
+  PowerFxSnap,
   SheepSnap,
   UnitSnap,
   UnitType,
@@ -37,8 +38,12 @@ export type GameCommand =
   | { kind: 'cancelTrain'; buildingId: number; index: number }
   | { kind: 'attack'; unitIds: number[]; targetId: number }
   | { kind: 'setRally'; buildingId: number; x: number; y: number }
-  // pesquisar a próxima era no Centro da Cidade
-  | { kind: 'advanceAge' }
+  // pesquisar a próxima era no Centro da Cidade. AoM: `minorGod` = which of the
+  // two minor gods of the next age to worship (unlocks its myth unit + power).
+  | { kind: 'advanceAge'; minorGod?: string }
+  // AoM: invoke a god power (each usable once per game). x/y = map target
+  // (tiles) for targeted powers.
+  | { kind: 'castPower'; power: string; x?: number; y?: number }
   // pesquisar uma tecnologia/upgrade num prédio
   | { kind: 'research'; buildingId: number; techId: string }
   // Mercado: comprar/vender 1 lote (100) de recurso por ouro (requer mercado pronto)
@@ -77,7 +82,10 @@ export type ClientMessage =
   | { type: 'joinRoom'; roomId: string }
   | { type: 'leaveRoom' }
   | { type: 'setReady'; ready: boolean }
-  | { type: 'setTeam'; playerId: number; team: number } // apenas host: time da vaga (0 = sozinho, 1/2 = time)
+  | { type: 'setTeam'; playerId: number; team: number } // apenas host: time da vaga (0 = sozinho, 1..3 = time)
+  // AoM: pick a major god (decides the civ). Players pick their own; the host
+  // picks for bots. 'random' is resolved when the game starts.
+  | { type: 'setGod'; playerId: number; god: string }
   | { type: 'addBot'; difficulty?: BotDifficulty } // apenas host: adiciona um oponente de IA à sala
   | { type: 'removeBot' } // apenas host: remove o último bot
   | { type: 'startGame' } // apenas host
@@ -109,7 +117,9 @@ export interface RoomPlayer {
   color: string;
   isBot?: boolean;
   difficulty?: BotDifficulty; // só bots
-  team?: number; // 0/ausente = sozinho (cada um por si); 1/2 = time
+  team?: number; // 0/ausente = sozinho (cada um por si); 1..3 = time
+  /** AoM major god pick ('random' until the game starts). */
+  god?: string;
 }
 
 export type ServerMessage =
@@ -139,6 +149,8 @@ export type ServerMessage =
       /** Preços do mercado (ouro por lote de 100) — globais da sala.
        *  Ausente pro espectador (é informação de economia). */
       market?: MarketPrices;
+      /** AoM god powers visible on the map right now. */
+      fx?: PowerFxSnap[];
       /** Quantos estão assistindo. Vai só pros JOGADORES, pra ninguém ser
        *  observado sem saber. */
       spectators?: number;
@@ -156,4 +168,6 @@ export type ServerMessage =
   // Partida pausada/retomada (para TODOS da sala). `by` = quem mexeu (mostra na tela).
   | { type: 'gamePaused'; paused: boolean; by: string }
   // Sinalização no minimapa (só chega aos ALIADOS do autor). `color` = cor do autor.
-  | { type: 'ping'; x: number; y: number; color: string };
+  | { type: 'ping'; x: number; y: number; color: string }
+  // AoM: someone invoked a god power (announced to everyone in the match).
+  | { type: 'powerCast'; by: number; byName: string; power: string; x?: number; y?: number };

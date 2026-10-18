@@ -21,6 +21,7 @@ import {
 } from '@age/shared';
 import type { BotDifficulty, BuildingType, NodeType, ResourceType, UnitType } from '@age/shared';
 import { idx, type Grid } from './path';
+import { runMythAI } from './ai_myth';
 import type { Game } from './room';
 import type { Building, ResNode, Sheep, Unit } from './state';
 
@@ -272,6 +273,9 @@ export function runBotAI(game: Game, botId: number): void {
     }
   }
 
+  // AoM: worship, myth units, heroes and god powers
+  if (!advancingNow) runMythAI(game, botId, { villagers, military, buildings, base, afford, diff, savingForAge: preparingAge });
+
   // ALIADO PROTETOR: a base de um aliado apanhou há pouco? Manda os soldados
   // ociosos pra lá (chegando, o auto-aggro engaja sozinho). O move tira as
   // unidades de 'idle', então não re-envia todo tick. Fácil não vai (passivo).
@@ -377,6 +381,7 @@ function nearestSheep(game: Game, x: number, y: number, maxDist: number, botId: 
   let bestD = maxDist;
   for (const s of game.sheep.values()) {
     if (s.owner !== SHEEP_WILD_OWNER && s.owner !== botId) continue;
+    if (game.sheepBlocked(s.id)) continue; // a villager couldn't reach it recently
     const d = Math.hypot(s.x - x, s.y - y);
     if (d < bestD) {
       bestD = d;
@@ -415,6 +420,8 @@ function ensureCoreBuildings(
 ): boolean {
   const desired: { type: BuildingType; count: number }[] = [
     { type: 'barracks', count: 1 + profile.extraBarracks },
+    // AoM: a Temple early (favor + myth units); Egyptians build a 2nd for favor
+    { type: 'temple', count: ctx.game.players.get(ctx.botId)?.civ ? (ctx.game.players.get(ctx.botId)?.civ === 'egyptian' && age >= 2 ? 2 : 1) : 0 },
     { type: 'blacksmith', count: 1 },
     { type: 'market', count: 1 },
     { type: 'archery_range', count: 1 },

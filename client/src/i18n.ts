@@ -6,8 +6,8 @@
 //      (montada no boot). Como trocar de idioma recarrega a página, esses
 //      exports "congelados" no idioma corrente bastam e não quebram quem os
 //      importa por índice (ex.: UNIT_NAMES[type] no hud.ts).
-import type { BuildingType, NodeType, ResourceType, UnitType } from '@age/shared';
-import { NODE_DEFS } from '@age/shared';
+import type { BuildingType, CostKey, NodeType, ResourceType, UnitType } from '@age/shared';
+import { MYTH_DESCS, MYTH_LOOK, MYTH_NAMES, NODE_DEFS } from '@age/shared';
 import { settings, type Lang } from './settings';
 
 /** Idioma atual da interface (definido no boot pelo settings). */
@@ -20,6 +20,24 @@ export function getLang(): Lang {
 type Dict = Record<string, string>;
 
 const PT: Dict = {
+  // ---- Age of Mythology ----
+  'myth.god': 'Deus',
+  'myth.god_tip': 'Deus maior: define sua civilização (Grega, Egípcia, Nórdica), um bônus e seu primeiro poder divino. Clique para trocar.',
+  'myth.random': 'Aleatório',
+  'myth.favor_tip': 'Favor: paga as unidades míticas. {how}',
+  'myth.powers': 'Poderes divinos',
+  'myth.power_tip': '{name} — {desc} Uso único.',
+  'myth.power_used': '{name} (já usado)',
+  'myth.power_target': 'Clique no mapa para invocar {name} — Esc/botão direito cancela',
+  'myth.cast': '{who} invocou {power}!',
+  'myth.choose_god': 'Avançar para {age} cultuando {god}',
+  'myth.choose_god_desc': '{god}: unidade mítica {myth}, poder {power}. Custa {cost}.',
+  'myth.worship_hint': 'Gregos: clique direito no Templo com aldeões para cultuar (favor).',
+  'myth.civ_greek': 'Grega', 'myth.civ_egyptian': 'Egípcia', 'myth.civ_norse': 'Nórdica',
+  'err.myth_locked': 'Bloqueado: escolha esse deus menor num avanço de era antes.',
+  'err.power_used': 'Esse poder divino já foi usado.',
+  'err.power_unknown': 'Você não tem esse poder divino.',
+  'err.power_target': 'Escolha um alvo no mapa.',
   // comuns
   'common.back_lobby': 'Voltar ao lobby',
   'common.you_suffix': ' (você)',
@@ -248,6 +266,24 @@ const PT: Dict = {
 };
 
 const EN: Dict = {
+  // ---- Age of Mythology ----
+  'myth.god': 'God',
+  'myth.god_tip': 'Major god: decides your civilization (Greek, Egyptian, Norse), a bonus and your first god power. Click to change.',
+  'myth.random': 'Random',
+  'myth.favor_tip': 'Favor: pays for myth units. {how}',
+  'myth.powers': 'God powers',
+  'myth.power_tip': '{name} — {desc} Single use.',
+  'myth.power_used': '{name} (already used)',
+  'myth.power_target': 'Click on the map to invoke {name} — Esc/right-click cancels',
+  'myth.cast': '{who} invoked {power}!',
+  'myth.choose_god': 'Advance to {age} worshipping {god}',
+  'myth.choose_god_desc': '{god}: myth unit {myth}, god power {power}. Costs {cost}.',
+  'myth.worship_hint': 'Greek: right-click the Temple with villagers to worship (favor).',
+  'myth.civ_greek': 'Greek', 'myth.civ_egyptian': 'Egyptian', 'myth.civ_norse': 'Norse',
+  'err.myth_locked': 'Locked: pick that minor god at an age-up first.',
+  'err.power_used': 'That god power was already used.',
+  'err.power_unknown': "You don't have that god power.",
+  'err.power_target': 'Choose a target on the map.',
   'common.back_lobby': 'Back to lobby',
   'common.you_suffix': ' (you)',
   'name.welcome_to': 'Welcome to',
@@ -464,6 +500,24 @@ const EN: Dict = {
 };
 
 const ES: Dict = {
+  // ---- Age of Mythology ----
+  'myth.god': 'Dios',
+  'myth.god_tip': 'Dios mayor: define tu civilización (Griega, Egipcia, Nórdica), una bonificación y tu primer poder divino. Clic para cambiar.',
+  'myth.random': 'Aleatorio',
+  'myth.favor_tip': 'Favor: paga las unidades míticas. {how}',
+  'myth.powers': 'Poderes divinos',
+  'myth.power_tip': '{name} — {desc} Un solo uso.',
+  'myth.power_used': '{name} (ya usado)',
+  'myth.power_target': 'Haz clic en el mapa para invocar {name} — Esc/clic derecho cancela',
+  'myth.cast': '¡{who} invocó {power}!',
+  'myth.choose_god': 'Avanzar a {age} adorando a {god}',
+  'myth.choose_god_desc': '{god}: unidad mítica {myth}, poder {power}. Cuesta {cost}.',
+  'myth.worship_hint': 'Griegos: clic derecho en el Templo con aldeanos para adorar (favor).',
+  'myth.civ_greek': 'Griega', 'myth.civ_egyptian': 'Egipcia', 'myth.civ_norse': 'Nórdica',
+  'err.myth_locked': 'Bloqueado: elige ese dios menor en un avance de edad primero.',
+  'err.power_used': 'Ese poder divino ya fue usado.',
+  'err.power_unknown': 'No tienes ese poder divino.',
+  'err.power_target': 'Elige un objetivo en el mapa.',
   'common.back_lobby': 'Volver al lobby',
   'common.you_suffix': ' (tú)',
   'name.welcome_to': 'Bienvenido a',
@@ -695,7 +749,10 @@ export function t(key: string, params?: Record<string, string | number>): string
 
 // ---------------------------------------------------------- conteúdo (nomes)
 
-const UNIT_NAMES_ALL: Record<Lang, Record<UnitType, string>> = {
+// Names of the original 7 units per language. Age of Mythology names (myth
+// units, heroes, civ units like Hoplite) come from shared/src/mythology.ts and
+// are English in every language for now (proper nouns, mostly).
+const UNIT_NAMES_ALL: Record<Lang, Partial<Record<UnitType, string>>> = {
   pt: { villager: 'Aldeão', swordsman: 'Espadachim', archer: 'Arqueiro', knight: 'Cavaleiro', fishing_boat: 'Barco de Pesca', war_galley: 'Galé de Guerra', transport: 'Transporte' },
   en: { villager: 'Villager', swordsman: 'Swordsman', archer: 'Archer', knight: 'Knight', fishing_boat: 'Fishing Boat', war_galley: 'War Galley', transport: 'Transport Ship' },
   es: { villager: 'Aldeano', swordsman: 'Espadachín', archer: 'Arquero', knight: 'Caballero', fishing_boat: 'Barco Pesquero', war_galley: 'Galera de Guerra', transport: 'Transporte' },
@@ -706,19 +763,19 @@ const BUILDING_NAMES_ALL: Record<Lang, Record<BuildingType, string>> = {
     town_center: 'Centro da Cidade', house: 'Casa', barracks: 'Quartel', farm: 'Fazenda',
     archery_range: 'Arquearia', stable: 'Estábulo', blacksmith: 'Ferraria', market: 'Mercado',
     wall: 'Muralha', watch_tower: 'Torre de Vigia', mill: 'Moinho', lumber_camp: 'Madeireira',
-    mining_camp: 'Campo de Mineração', dock: 'Porto',
+    mining_camp: 'Campo de Mineração', dock: 'Porto', temple: 'Templo',
   },
   en: {
     town_center: 'Town Center', house: 'House', barracks: 'Barracks', farm: 'Farm',
     archery_range: 'Archery Range', stable: 'Stable', blacksmith: 'Blacksmith', market: 'Market',
     wall: 'Wall', watch_tower: 'Watch Tower', mill: 'Mill', lumber_camp: 'Lumber Camp',
-    mining_camp: 'Mining Camp', dock: 'Dock',
+    mining_camp: 'Mining Camp', dock: 'Dock', temple: 'Temple',
   },
   es: {
     town_center: 'Centro Urbano', house: 'Casa', barracks: 'Cuartel', farm: 'Granja',
     archery_range: 'Galería de Tiro', stable: 'Establo', blacksmith: 'Herrería', market: 'Mercado',
     wall: 'Muralla', watch_tower: 'Torre de Vigía', mill: 'Molino', lumber_camp: 'Campamento Maderero',
-    mining_camp: 'Campamento Minero', dock: 'Puerto',
+    mining_camp: 'Campamento Minero', dock: 'Puerto', temple: 'Templo',
   },
 };
 
@@ -728,10 +785,10 @@ const NODE_NAMES_ALL: Record<Lang, Record<NodeType, string>> = {
   es: { tree: 'Árbol', berry_bush: 'Arbusto de bayas', gold_mine: 'Mina de oro', stone_mine: 'Mina de piedra', fish: 'Banco de peces' },
 };
 
-const RESOURCE_NAMES_ALL: Record<Lang, Record<ResourceType, string>> = {
-  pt: { food: 'comida', wood: 'madeira', gold: 'ouro', stone: 'pedra' },
-  en: { food: 'food', wood: 'wood', gold: 'gold', stone: 'stone' },
-  es: { food: 'comida', wood: 'madera', gold: 'oro', stone: 'piedra' },
+const RESOURCE_NAMES_ALL: Record<Lang, Record<CostKey, string>> = {
+  pt: { food: 'comida', wood: 'madeira', gold: 'ouro', stone: 'pedra', favor: 'favor' },
+  en: { food: 'food', wood: 'wood', gold: 'gold', stone: 'stone', favor: 'favor' },
+  es: { food: 'comida', wood: 'madera', gold: 'oro', stone: 'piedra', favor: 'favor' },
 };
 
 const BUILDING_DESCS_ALL: Record<Lang, Record<BuildingType, string>> = {
@@ -750,6 +807,7 @@ const BUILDING_DESCS_ALL: Record<Lang, Record<BuildingType, string>> = {
     lumber_camp: 'Depósito de MADEIRA. Construa junto à floresta pra encurtar a viagem dos lenhadores.',
     mining_camp: 'Depósito de OURO e PEDRA. Construa ao lado das minas.',
     dock: 'Construído NA ÁGUA, encostado na costa. Deposita o peixe e treina os barcos (pesca, guerra e transporte).',
+    temple: 'Treina o herói e as unidades míticas dos deuses menores que você escolher. Gregos: aldeões adoram aqui para gerar favor.',
   },
   en: {
     town_center: 'The heart of your town: trains villagers, receives gathered resources, and researches the next age.',
@@ -766,6 +824,7 @@ const BUILDING_DESCS_ALL: Record<Lang, Record<BuildingType, string>> = {
     lumber_camp: "WOOD drop-off. Build it by the forest to shorten your lumberjacks' trips.",
     mining_camp: 'GOLD and STONE drop-off. Build it next to the mines.',
     dock: 'Built ON the water, hugging the shore. Receives fish and trains ships (fishing, war, and transport).',
+    temple: 'Trains your hero and the myth units of the minor gods you pick. Greeks: villagers worship here to generate favor.',
   },
   es: {
     town_center: 'El corazón de tu aldea: entrena aldeanos, recibe los recursos recolectados e investiga el avance de edad.',
@@ -782,10 +841,11 @@ const BUILDING_DESCS_ALL: Record<Lang, Record<BuildingType, string>> = {
     lumber_camp: 'Depósito de MADERA. Constrúyelo junto al bosque para acortar el viaje de los leñadores.',
     mining_camp: 'Depósito de ORO y PIEDRA. Constrúyelo junto a las minas.',
     dock: 'Se construye EN el agua, pegado a la costa. Recibe el pescado y entrena los barcos (pesca, guerra y transporte).',
+    temple: 'Entrena al héroe y las unidades míticas de los dioses menores que elijas. Griegos: los aldeanos adoran aquí para generar favor.',
   },
 };
 
-const UNIT_DESCS_ALL: Record<Lang, Record<UnitType, string>> = {
+const UNIT_DESCS_ALL: Record<Lang, Partial<Record<UnitType, string>>> = {
   pt: {
     villager: 'Coleta recursos, constrói e conserta — a base da sua economia.',
     swordsman: 'Infantaria corpo a corpo, equilibrada e barata.',
@@ -815,10 +875,11 @@ const UNIT_DESCS_ALL: Record<Lang, Record<UnitType, string>> = {
   },
 };
 
+// Age of Mythology ages.
 const AGE_NAMES_ALL: Record<Lang, string[]> = {
-  pt: ['', 'Idade das Trevas', 'Idade Feudal', 'Idade dos Castelos', 'Idade Imperial'],
-  en: ['', 'Dark Age', 'Feudal Age', 'Castle Age', 'Imperial Age'],
-  es: ['', 'Edad Oscura', 'Edad Feudal', 'Edad de los Castillos', 'Edad Imperial'],
+  pt: ['', 'Era Arcaica', 'Era Clássica', 'Era Heroica', 'Era Mítica'],
+  en: ['', 'Archaic Age', 'Classical Age', 'Heroic Age', 'Mythic Age'],
+  es: ['', 'Edad Arcaica', 'Edad Clásica', 'Edad Heroica', 'Edad Mítica'],
 };
 
 const TECH_NAMES_ALL: Record<Lang, Record<string, string>> = {
@@ -850,12 +911,16 @@ const TECH_NAMES_ALL: Record<Lang, Record<string, string>> = {
 // AGE_NAMES[age] etc. a cada frame (o HUD) passa a ver o novo idioma na hora —
 // permitindo trocar de idioma no meio da partida sem recarregar (o reload
 // derrubaria a conexão e a partida).
-export const UNIT_NAMES: Record<UnitType, string> = { ...UNIT_NAMES_ALL[getLang()] };
+const withMyth = (lang: Lang): Record<UnitType, string> =>
+  ({ ...MYTH_NAMES, ...UNIT_NAMES_ALL[lang] }) as Record<UnitType, string>;
+const withMythDescs = (lang: Lang): Record<UnitType, string> =>
+  ({ ...MYTH_DESCS, ...UNIT_DESCS_ALL[lang] }) as Record<UnitType, string>;
+export const UNIT_NAMES: Record<UnitType, string> = withMyth(getLang());
 export const BUILDING_NAMES: Record<BuildingType, string> = { ...BUILDING_NAMES_ALL[getLang()] };
 export const NODE_NAMES: Record<NodeType, string> = { ...NODE_NAMES_ALL[getLang()] };
-export const RESOURCE_NAMES: Record<ResourceType, string> = { ...RESOURCE_NAMES_ALL[getLang()] };
+export const RESOURCE_NAMES: Record<CostKey, string> = { ...RESOURCE_NAMES_ALL[getLang()] };
 export const BUILDING_DESCS: Record<BuildingType, string> = { ...BUILDING_DESCS_ALL[getLang()] };
-export const UNIT_DESCS: Record<UnitType, string> = { ...UNIT_DESCS_ALL[getLang()] };
+export const UNIT_DESCS: Record<UnitType, string> = withMythDescs(getLang());
 /** Nomes das eras no idioma atual (índice = era; 0 vazio). Substitui o AGE_NAMES
  *  do shared (que fica em pt para o servidor). */
 export const AGE_NAMES: string[] = [...AGE_NAMES_ALL[getLang()]];
@@ -866,12 +931,12 @@ export const AGE_NAMES: string[] = [...AGE_NAMES_ALL[getLang()]];
  *  precisam se re-renderizar depois desta chamada. */
 export function applyLang(lang: Lang): void {
   settings.lang = lang;
-  Object.assign(UNIT_NAMES, UNIT_NAMES_ALL[lang]);
+  Object.assign(UNIT_NAMES, withMyth(lang));
   Object.assign(BUILDING_NAMES, BUILDING_NAMES_ALL[lang]);
   Object.assign(NODE_NAMES, NODE_NAMES_ALL[lang]);
   Object.assign(RESOURCE_NAMES, RESOURCE_NAMES_ALL[lang]);
   Object.assign(BUILDING_DESCS, BUILDING_DESCS_ALL[lang]);
-  Object.assign(UNIT_DESCS, UNIT_DESCS_ALL[lang]);
+  Object.assign(UNIT_DESCS, withMythDescs(lang));
   AGE_NAMES.length = 0;
   AGE_NAMES.push(...AGE_NAMES_ALL[lang]);
 }
@@ -885,14 +950,16 @@ export function techName(id: string): string {
 
 // ATENÇÃO: usar apenas emojis antigos (Unicode <= 12). Os de madeira/ouro/pedra
 // (🪵🪙🪨, Unicode 13) não existem no Windows 10 — apareciam só os números.
-export const RESOURCE_ICONS: Record<ResourceType, string> = {
+export const RESOURCE_ICONS: Record<CostKey, string> = {
   food: '🍖',
   wood: '🌲',
   gold: '💰',
   stone: '⛰️',
+  favor: '✨',
 };
 
 export const UNIT_ICONS: Record<UnitType, string> = {
+  ...(Object.fromEntries(Object.entries(MYTH_LOOK).map(([k, v]) => [k, v!.glyph])) as Record<UnitType, string>),
   villager: '👨‍🌾',
   swordsman: '⚔️',
   archer: '🏹',
@@ -917,6 +984,7 @@ export const BUILDING_ICONS: Record<BuildingType, string> = {
   lumber_camp: '🪓',
   mining_camp: '⛏️',
   dock: '⚓',
+  temple: '⛩',
 };
 
 export const NODE_ICONS: Record<NodeType, string> = {
@@ -934,18 +1002,18 @@ export function nodeResourceIcon(type: NodeType): string {
 }
 
 /** Texto curto de custo, ex.: "50 🌲  20 💰". */
-export function costText(cost: Partial<Record<ResourceType, number>>): string {
+export function costText(cost: Partial<Record<CostKey, number>>): string {
   const parts: string[] = [];
-  for (const [res, val] of Object.entries(cost) as [ResourceType, number][]) {
+  for (const [res, val] of Object.entries(cost) as [CostKey, number][]) {
     if (val && val > 0) parts.push(`${val} ${RESOURCE_ICONS[res]}`);
   }
   return parts.join('  ');
 }
 
 /** Texto longo de custo no idioma atual, ex.: "50 madeira, 20 ouro". */
-export function costLongText(cost: Partial<Record<ResourceType, number>>): string {
+export function costLongText(cost: Partial<Record<CostKey, number>>): string {
   const parts: string[] = [];
-  for (const [res, val] of Object.entries(cost) as [ResourceType, number][]) {
+  for (const [res, val] of Object.entries(cost) as [CostKey, number][]) {
     if (val && val > 0) parts.push(`${val} ${RESOURCE_NAMES[res]}`);
   }
   return parts.join(', ');

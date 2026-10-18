@@ -1,6 +1,7 @@
 // Lobby: conexões, salas, chat e transição sala -> partida.
 
-import { MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START, PLAYER_COLORS } from '@age/shared';
+import { MAJOR_GODS, MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START, PLAYER_COLORS, resolveGod } from '@age/shared';
+import type { GodPick } from '@age/shared';
 import type { BotDifficulty, ClientMessage, GameMode, RoomPlayer, RoomSummary, ServerMessage, TerrainKind } from '@age/shared';
 import { Game, type RoomMember } from './game/room';
 
@@ -25,6 +26,7 @@ interface RoomPlayerState {
   difficulty?: BotDifficulty; // apenas bots
   team?: number; // 0/ausente = sozinho; 1/2 = time (host escolhe na sala)
   name?: string; // apenas bots (não têm Connection)
+  god?: GodPick; // AoM major god pick ('random' default)
   clientId?: string;   // identidade estável do navegador (p/ reconectar na MESMA partida)
   disconnected?: boolean; // caiu no meio do jogo e a vaga está reservada (aguardando reconexão)
   graceTimer?: ReturnType<typeof setTimeout>; // conta o tempo até desistir e derrotar
@@ -228,6 +230,9 @@ export class Lobby {
         break;
       case 'setTeam':
         this.setTeam(conn, msg.playerId, msg.team);
+        break;
+      case 'setGod':
+        this.setGod(conn, msg.playerId, msg.god);
         break;
       case 'addBot':
         this.addBot(conn, msg.difficulty);
@@ -688,6 +693,22 @@ export class Lobby {
     this.broadcastRoomState(room.id);
   }
 
+  /** AoM: choose a major god. Humans pick their own slot; the host also picks
+   *  for bots. 'random' is resolved at game start. */
+  private setGod(conn: Connection, playerId: number, god: string): void {
+    if (!conn.roomId) return;
+    const room = this.rooms.get(conn.roomId);
+    if (!room || room.inGame) return;
+    const m = room.members.get(playerId);
+    if (!m) return;
+    const allowed = playerId === conn.id || (m.isBot && room.hostId === conn.id);
+    if (!allowed) return;
+    if (god !== 'random' && !(god in MAJOR_GODS)) return;
+    m.god = god as GodPick;
+    this.touch(room);
+    this.broadcastRoomState(room.id);
+  }
+
   /** Insere um bot na sala (sem broadcasts). false = sala cheia. */
   private addBotToRoom(room: Room, difficulty?: BotDifficulty): boolean {
     if (room.members.size >= MAX_PLAYERS_PER_ROOM) return false;
@@ -770,6 +791,7 @@ export class Lobby {
         isBot: !!m.isBot,
         difficulty: m.difficulty,
         team: m.team,
+        god: resolveGod(m.god, Math.random()),
       };
     });
 
@@ -908,6 +930,7 @@ export class Lobby {
         isBot: !!m.isBot,
         difficulty: m.difficulty,
         team: m.team,
+        god: m.god ?? 'random',
       };
     });
     const msg: ServerMessage = { type: 'roomState', roomId, players, mode: room.mode, fog: room.fog, terrain: room.terrain, broadcast: room.broadcast };

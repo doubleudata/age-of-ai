@@ -1069,3 +1069,23 @@ button.btn.trade-btn {
 
 /* Derrota com a partida continuando: dois caminhos (assistir ou sair). */
 .defeat-actions { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
+
+/* ---------------- Age of Mythology ---------------- */
+.god-chip {
+  font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid #8a7a4f; background: rgba(20, 16, 10, 0.55); color: #f1e3b5; margin-left: 4px;
+}
+.god-chip:disabled { opacity: 0.8; cursor: default; }
+.god-chip.civ-greek { border-color: #6aa2d8; color: #cfe4f7; }
+.god-chip.civ-egyptian { border-color: #d6b36a; color: #f6e2b0; }
+.god-chip.civ-norse { border-color: #b9c3cf; color: #e6ebf1; }
+.res.favor b { color: #f6e7a0; }
+.power-bar {
+  position: absolute; top: 52px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px; padding: 4px 10px; z-index: 6; pointer-events: auto;
+}
+.power-bar.hidden { display: none; }
+.power-head { font-size: 13px; color: #f1e3b5; margin-right: 4px; white-space: nowrap; }
+.power-btn { width: 34px; height: 34px; font-size: 18px; padding: 0; line-height: 1; }
+.power-btn.used { opacity: 0.3; filter: grayscale(1); }
+.god-btn { display: block; width: 100%; margin-top: 4px; font-size: 12px; text-align: left; white-space: normal; }

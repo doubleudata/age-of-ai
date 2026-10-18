@@ -11,9 +11,12 @@ import type {
   NodeType,
   PlayerInfo,
   PlayerSnap,
+  PowerFxSnap,
   SheepSnap,
   UnitSnap,
   UnitType,
+  Civ,
+  MajorGodId,
 } from '@age/shared';
 import {
   BUILDING_DEFS,
@@ -28,6 +31,9 @@ import {
   TILE_WATER,
   UNIT_DEFS,
   isNavalUnit,
+  MYTH_LOOK,
+  POWERS,
+  unitStats,
 } from '@age/shared';
 import { FogOfWar } from './game/fog';
 
@@ -45,6 +51,8 @@ export interface SnapshotData {
   market?: MarketPrices;
   /** Quantos estão assistindo (só chega pros JOGADORES). */
   spectators?: number;
+  /** AoM god powers on the map. */
+  fx?: PowerFxSnap[];
 }
 
 export type PickResult =
@@ -57,6 +65,8 @@ export type PickResult =
 export function unitRadius(type: UnitType): number {
   if (type === 'villager') return 0.28;
   if (type === 'knight') return 0.44;
+  const look = MYTH_LOOK[type];
+  if (look) return 0.35 * look.scale;
   return 0.35;
 }
 
@@ -72,7 +82,7 @@ export function unitRadius(type: UnitType): number {
  *  altura real era 1.15) enfiava o aldeão dentro de casa em vez de mandar cortar
  *  lenha. `scripts/sprite_height_test.ts` trava esse lado: mede o PNG e reprova
  *  qualquer valor MAIOR que o sprite. Na dúvida, BAIXE o número. */
-export const B_H: Partial<Record<BuildingType, number>> = { farm: 0.2, house: 1.7, town_center: 1.2, wall: 0.9, watch_tower: 3.4, market: 2.0, mill: 1.6, lumber_camp: 1.4, mining_camp: 1.4 };
+export const B_H: Partial<Record<BuildingType, number>> = { farm: 0.2, house: 1.7, town_center: 1.2, wall: 0.9, watch_tower: 3.4, market: 2.0, mill: 1.6, lumber_camp: 1.4, mining_camp: 1.4, temple: 1.6 };
 
 /** Margem MORTA na borda do prédio, em tiles (a caixa de clique encolhe por
  *  todos os lados). Só o CENTRO usa: ele é grande (3x3), fica no meio da base
@@ -94,6 +104,10 @@ export class GameState {
   playerSnaps = new Map<number, PlayerSnap>();
   /** Preços do mercado (ouro por lote de 100), atualizados por snapshot. */
   marketPrices: MarketPrices = { food: 100, wood: 100, stone: 100 };
+  /** AoM god powers visible on the map (from the latest snapshot). */
+  powerFx: PowerFxSnap[] = [];
+  /** Arrival time (ms) of each fx id — drives the client-side animation. */
+  fxSeenAt = new Map<number, number>();
   /** Quantos estão assistindo esta partida (0 se ninguém). Só chega pra quem
    *  JOGA — é o aviso de que há gente olhando. */
   spectatorCount = 0;
@@ -162,6 +176,18 @@ export class GameState {
     return this.playerSnaps.get(this.you);
   }
 
+  /** AoM civilization / major god of a player (undefined in legacy games). */
+  civOf(owner: number): Civ | undefined {
+    return this.players.find((p) => p.id === owner)?.civ as Civ | undefined;
+  }
+  godOf(owner: number): MajorGodId | undefined {
+    return this.players.find((p) => p.id === owner)?.god as MajorGodId | undefined;
+  }
+  /** Effective stats of a unit type for a player's civ + god. */
+  statsFor(type: UnitType, owner: number) {
+    return unitStats(type, this.civOf(owner), this.godOf(owner));
+  }
+
   // ------------------------------------------------------------- névoa
   // Regras de aparição (usadas por renderer, minimapa e clique):
   // unidades/ovelhas móveis exigem tile À VISTA; prédios/nós valem com
@@ -197,6 +223,8 @@ export class GameState {
     this.tick = typeof snap.tick === 'number' ? snap.tick : this.tick;
     if (snap.market) this.marketPrices = snap.market;
     this.spectatorCount = snap.spectators ?? 0;
+    this.powerFx = Array.isArray(snap.fx) ? snap.fx : [];
+    for (const f of this.powerFx) if (!this.fxSeenAt.has(f.id)) this.fxSeenAt.set(f.id, performance.now());
 
     // --- deltas de combate (dano/morte) comparando com o snapshot anterior ---
     const now = this.snapTime;
@@ -337,6 +365,12 @@ export class GameState {
     for (const sp of this.sheep.values()) {
       if (this.isWildSheep(sp) || !this.alliedOwners.has(sp.owner)) continue;
       sources.push({ x: sp.x, y: sp.y, r: SHEEP_VISION });
+    }
+    // AoM reveal powers (Watchful Eye) light up their area for the caster's side;
+    // every other power shows its own area while it lasts.
+    for (const f of this.powerFx) {
+      if (!this.alliedOwners.has(f.owner)) continue;
+      sources.push({ x: f.x, y: f.y, r: POWERS[f.power as keyof typeof POWERS]?.kind === 'reveal' ? f.radius : Math.min(f.radius, 6) });
     }
     this.fog.recompute(sources);
 

@@ -4,7 +4,7 @@
 // substituídos por arte dedicada nas próximas etapas.
 
 import type { BuildingSnap, BuildingType, NodeSnap, NodeType, ResourceType, SheepSnap, UnitSnap } from '@age/shared';
-import { BUILDING_DEFS, DEFENSE_DEFS, SHEEP_FOOD, TILE_SHALLOW, TILE_WATER, UNIT_DEFS, isNavalUnit, techBonus } from '@age/shared';
+import { BUILDING_DEFS, DEFENSE_DEFS, MYTH_LOOK, POWERS, SHEEP_FOOD, TILE_SHALLOW, TILE_WATER, UNIT_DEFS, isNavalUnit, techBonus } from '@age/shared';
 import type { GameState } from '../state';
 import type { Camera } from './camera';
 import { ISO_HH, ISO_HW } from './camera';
@@ -376,6 +376,9 @@ export class Renderer {
       ctx.drawImage(fogCanvas, 0, 0);
       ctx.restore();
     }
+
+    // --- AoM god powers on the map + targeting preview ---
+    this.drawPowerFx(ctx, px, py, hh, cam, ui, now);
 
     // --- bandeiras de reunião ---
     for (const id of this.gs.selection) {
@@ -2061,6 +2064,125 @@ export class Renderer {
   /** Desenha um PNG de prédio ancorado no tile: base no canto frontal do
    *  footprint, centrado; largura = losango × fit.scale. Retorna o topo (px)
    *  aproximado para a barra de vida. */
+  /** AoM Temple, styled by the owner's civilization (original placeholder art):
+   *  Greek marble colonnade, Egyptian sandstone shrine with obelisks, Norse
+   *  timber hall. A favor-gold glow sits on top. */
+  private drawTemple(ctx: CanvasRenderingContext2D, st: BSite): number {
+    const { T, R, B, L, th, hh, s, owner, under, prog, now, b } = st;
+    const civ = this.gs.civOf(b.owner);
+    const H = Math.max(6, th * 0.6) * prog;
+    let peakY: number;
+    if (civ === 'egyptian') {
+      const top = this.walls(ctx, T, R, B, L, H, '#d6b36a');
+      this.wallLines(ctx, L, B, H, 3, true);
+      this.wallLines(ctx, B, R, H, 3, true);
+      if (!under) this.door(ctx, B, R, H);
+      // flat roof cap + two obelisks at the front corners
+      this.poly(ctx, [top.T2, top.R2, top.B2, top.L2], '#e8cf8f', '#a8894a');
+      for (const c of [L, R]) {
+        const ox = c.x + (B.x - c.x) * 0.15;
+        const oy = c.y + (B.y - c.y) * 0.15;
+        this.poly(ctx, [{ x: ox - hh * 0.18, y: oy }, { x: ox + hh * 0.18, y: oy }, { x: ox + hh * 0.1, y: oy - th * 1.6 * prog }, { x: ox, y: oy - th * 1.8 * prog }, { x: ox - hh * 0.1, y: oy - th * 1.6 * prog }], '#c9a85a', '#8a6a2f');
+      }
+      peakY = Math.min(top.T2.y, top.L2.y) - th * 0.2;
+    } else if (civ === 'norse') {
+      const top = this.walls(ctx, T, R, B, L, H, '#7a5836');
+      this.timberFrame(ctx, L, B, H, '#4a3520');
+      this.timberFrame(ctx, B, R, H, '#4a3520');
+      if (!under) this.door(ctx, B, R, H);
+      const roofH = s * hh * 1.1;
+      this.gableRoof(ctx, top, roofH, '#3f3a34', true);
+      peakY = this.ridgeTop(top, roofH).y;
+    } else {
+      // Greek (and legacy/no-civ): marble with columns and a pediment
+      const top = this.walls(ctx, T, R, B, L, H, '#ece7dc');
+      ctx.strokeStyle = 'rgba(120,110,95,0.7)';
+      ctx.lineWidth = Math.max(1.5, hh * 0.18);
+      for (const [a, c] of [[L, B], [B, R]] as [Pt, Pt][]) {
+        for (let k = 1; k <= 4; k++) {
+          const f = k / 5;
+          const x = a.x + (c.x - a.x) * f;
+          const y = a.y + (c.y - a.y) * f;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - H); ctx.stroke();
+        }
+      }
+      const roofH = s * hh * 0.55;
+      this.gableRoof(ctx, top, roofH, '#d9d2c3', true);
+      peakY = this.ridgeTop(top, roofH).y;
+    }
+    if (!under) {
+      const cx = (T.x + B.x) / 2;
+      this.glow(ctx, cx, peakY - th * 0.25, hh * 1.2, 0.25 + 0.08 * Math.sin(now / 400));
+      this.blob(ctx, cx, peakY - th * 0.25, hh * 0.22, hh * 0.22, '#fde68a', '#b45309');
+      this.banner(ctx, (L.x + T.x) / 2, (L.y + T.y) / 2 - H, th * 0.8, owner);
+    }
+    return peakY - th * 0.5;
+  }
+
+  /** God powers: a pulsing area on the ground in the power's color, with its
+   *  icon; plus the targeting circle while a power is armed. */
+  private drawPowerFx(
+    ctx: CanvasRenderingContext2D,
+    px: (x: number, y: number) => number,
+    py: (x: number, y: number) => number,
+    hh: number,
+    cam: Camera,
+    ui: UIState,
+    now: number,
+  ): void {
+    const ellipse = (x: number, y: number, r: number): void => {
+      const cx = px(x, y);
+      const cy = py(x, y);
+      const rx = Math.abs(px(x + r, y) - px(x, y + r)) / 2 + 0.01;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, Math.max(rx, r * hh * 1.4), Math.max(rx / 2, r * hh * 0.7), 0, 0, Math.PI * 2);
+    };
+    for (const f of this.gs.powerFx) {
+      const def = POWERS[f.power as keyof typeof POWERS];
+      if (!def) continue;
+      if (!this.gs.alliedOwners.has(f.owner) && !this.gs.fog.isVisible(Math.floor(f.x), Math.floor(f.y))) continue;
+      if (def.kind === 'reveal' && !this.gs.alliedOwners.has(f.owner)) continue;
+      const seen = this.gs.fxSeenAt.get(f.id) ?? now;
+      const t = (now - seen) / 1000;
+      const pulse = 0.5 + 0.5 * Math.sin(t * 6);
+      const fade = Math.min(1, f.left * 3 + 0.15);
+      const r = def.kind === 'strike' && def.damage ? f.radius * Math.min(1, 0.3 + t * 2) : f.radius;
+      ellipse(f.x, f.y, r);
+      ctx.fillStyle = hexA(def.color, (def.kind === 'reveal' ? 0.06 : 0.16 + 0.1 * pulse) * fade);
+      ctx.fill();
+      ctx.strokeStyle = hexA(def.color, 0.75 * fade);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // falling strike: a bright column for the first moment
+      if (def.kind === 'strike' && def.damage && t < 0.6) {
+        const cx = px(f.x, f.y);
+        const cy = py(f.x, f.y);
+        ctx.fillStyle = hexA(def.color, 0.8 * (1 - t / 0.6));
+        ctx.fillRect(cx - hh * 0.4, cy - hh * 14, hh * 0.8, hh * 14);
+      }
+      ctx.font = `${Math.max(12, Math.round(hh * 1.6))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = fade;
+      ctx.fillText(def.icon, px(f.x, f.y), py(f.x, f.y) - hh * 0.6);
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'start';
+    }
+    if (ui.powerTarget && ui.hasMouse) {
+      const def = POWERS[ui.powerTarget as keyof typeof POWERS];
+      if (def) {
+        const w = cam.screenToWorld(ui.mouseX, ui.mouseY);
+        ellipse(w.x, w.y, def.radius ?? 2);
+        ctx.fillStyle = hexA(def.color, 0.18 + 0.08 * Math.sin(now / 150));
+        ctx.fill();
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = hexA(def.color, 0.95);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
   private drawBuildingSprite(
     ctx: CanvasRenderingContext2D,
     px: (x: number, y: number) => number,
@@ -2140,6 +2262,7 @@ export class Renderer {
         case 'lumber_camp': topY = this.drawLumberCamp(ctx, site); break;
         case 'mining_camp': topY = this.drawMiningCamp(ctx, site); break;
         case 'dock': topY = this.drawDock(ctx, site); break;
+        case 'temple': topY = this.drawTemple(ctx, site); break;
         default: topY = this.drawHouse(ctx, site); break;
       }
     }
@@ -2446,6 +2569,80 @@ export class Renderer {
     else if (u.type === 'swordsman') this.figSwordsman(ctx, sx, sy, U, color, dark, skin, steel, age);
     else if (u.type === 'archer') this.figArcher(ctx, sx, sy, U, color, dark, skin, age);
     else if (u.type === 'knight') this.figKnight(ctx, sx, sy, U, color, dark, skin, steel, age);
+    else if (u.type === 'hero') this.figHero(ctx, sx, sy, U, color, dark, skin, steel, age, now);
+    else if (MYTH_LOOK[u.type]) this.figMyth(ctx, sx, sy, U * (MYTH_LOOK[u.type]!.scale), u, color, dark, now, false);
+  }
+
+  /** Civ hero: an infantryman wrapped in a golden aura and cape (placeholder art). */
+  private figHero(ctx: CanvasRenderingContext2D, sx: number, sy: number, U: number, color: string, dark: string, skin: string, steel: string, age: number, now: number): void {
+    const pulse = 0.35 + 0.15 * Math.sin(now / 300);
+    ctx.strokeStyle = `rgba(250,214,90,${pulse})`;
+    ctx.lineWidth = Math.max(1.5, U * 0.12);
+    ctx.beginPath();
+    ctx.ellipse(sx, sy - U * 1.0, U * 0.75, U * 1.25, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    // cape behind the body
+    this.poly(ctx, [
+      { x: sx - 0.3 * U, y: sy - 1.45 * U }, { x: sx + 0.3 * U, y: sy - 1.45 * U },
+      { x: sx + 0.42 * U, y: sy - 0.2 * U }, { x: sx - 0.42 * U, y: sy - 0.2 * U },
+    ], '#d4af37', '#8a6a1f');
+    this.figSwordsman(ctx, sx, sy, U, color, dark, skin, steel, Math.max(3, age));
+    // star on the helm
+    this.blob(ctx, sx, sy - 2.0 * U, U * 0.13, U * 0.13, '#fde68a', '#b45309');
+  }
+
+  /** Generic myth creature (original placeholder): biped or quadruped body in
+   *  the creature's palette, owner-colored collar, horns/wings by type. */
+  private figMyth(ctx: CanvasRenderingContext2D, sx: number, sy: number, U: number, u: UnitSnap, color: string, dark: string, now: number, moving: boolean): void {
+    const look = MYTH_LOOK[u.type]!;
+    const body = look.body;
+    const bodyD = shadeHex(body, -0.35);
+    const ph = now * 0.01 + u.id * 1.3;
+    const lift = look.flying ? U * (0.5 + 0.12 * Math.sin(ph)) : 0;
+    const y0 = sy - lift;
+    if (look.flying) {
+      // wings
+      const flap = Math.sin(ph * 1.6) * 0.35;
+      this.poly(ctx, [{ x: sx, y: y0 - U * 1.1 }, { x: sx - U * 1.3, y: y0 - U * (1.6 + flap) }, { x: sx - U * 0.4, y: y0 - U * 0.8 }], shadeHex(body, 0.15), bodyD);
+      this.poly(ctx, [{ x: sx, y: y0 - U * 1.1 }, { x: sx + U * 1.3, y: y0 - U * (1.6 + flap) }, { x: sx + U * 0.4, y: y0 - U * 0.8 }], shadeHex(body, 0.15), bodyD);
+    }
+    if (look.quadruped) {
+      const step = moving ? Math.sin(ph) * 0.12 * U : 0;
+      for (const [lx, d] of [[-0.45, 1], [-0.2, -1], [0.25, 1], [0.48, -1]] as [number, number][]) {
+        this.limb(ctx, sx + lx * U, y0 - 0.55 * U, sx + lx * U + d * step, y0, 0.13 * U, bodyD);
+      }
+      this.blob(ctx, sx, y0 - 0.8 * U, 0.72 * U, 0.38 * U, body, bodyD); // torso
+      this.limb(ctx, sx - 0.68 * U, y0 - 0.85 * U, sx - 0.98 * U, y0 - 0.35 * U, 0.09 * U, bodyD); // tail
+      this.blob(ctx, sx + 0.72 * U, y0 - 1.15 * U, 0.3 * U, 0.24 * U, body, bodyD); // head
+      this.limb(ctx, sx + 0.35 * U, y0 - 1.0 * U, sx + 0.55 * U, y0 - 1.08 * U, 0.22 * U, color); // collar
+      if (u.type === 'centaur' || u.type === 'valkyrie') {
+        // rider/torso on top
+        this.block(ctx, sx + 0.1 * U, y0 - 1.4 * U, 0.4 * U, 0.6 * U, color, dark);
+        this.blob(ctx, sx + 0.1 * U, y0 - 1.85 * U, 0.2 * U, 0.22 * U, '#e2b48a', dark);
+      }
+      if (u.type === 'hydra') {
+        for (const k of [-1, 0, 1]) {
+          this.limb(ctx, sx + 0.5 * U, y0 - 1.0 * U, sx + (0.75 + k * 0.25) * U, y0 - (1.8 - Math.abs(k) * 0.2) * U, 0.14 * U, body);
+          this.blob(ctx, sx + (0.75 + k * 0.25) * U, y0 - (1.85 - Math.abs(k) * 0.2) * U, 0.16 * U, 0.12 * U, body, bodyD);
+        }
+      }
+    } else {
+      const step = moving ? Math.sin(ph) * 0.14 * U : 0;
+      this.limb(ctx, sx - 0.22 * U, y0 - 0.75 * U, sx - 0.26 * U + step, y0, 0.2 * U, bodyD);
+      this.limb(ctx, sx + 0.22 * U, y0 - 0.75 * U, sx + 0.26 * U - step, y0, 0.2 * U, bodyD);
+      this.block(ctx, sx, y0 - 1.15 * U, 0.8 * U, 1.0 * U, body, bodyD); // torso
+      this.limb(ctx, sx - 0.42 * U, y0 - 1.5 * U, sx - 0.55 * U, y0 - 0.85 * U, 0.17 * U, body);
+      this.limb(ctx, sx + 0.42 * U, y0 - 1.5 * U, sx + 0.62 * U, y0 - 1.0 * U, 0.17 * U, body);
+      this.limb(ctx, sx - 0.38 * U, y0 - 1.55 * U, sx + 0.38 * U, y0 - 1.55 * U, 0.16 * U, color); // owner-colored band
+      this.blob(ctx, sx, y0 - 1.85 * U, 0.28 * U, 0.28 * U, body, bodyD); // head
+      if (u.type === 'minotaur' || u.type === 'frost_giant' || u.type === 'einherjar') {
+        this.limb(ctx, sx - 0.2 * U, y0 - 2.0 * U, sx - 0.42 * U, y0 - 2.3 * U, 0.08 * U, '#efe6d0'); // horns
+        this.limb(ctx, sx + 0.2 * U, y0 - 2.0 * U, sx + 0.42 * U, y0 - 2.3 * U, 0.08 * U, '#efe6d0');
+      }
+      if (u.type === 'fire_giant' || u.type === 'avenger') {
+        this.glow(ctx, sx, y0 - 1.2 * U, U * 0.9, 0.18 + 0.06 * Math.sin(ph));
+      }
+    }
   }
 
   // ---------- unidades (figuras isométricas) ----------
@@ -2837,8 +3034,9 @@ export class Renderer {
     }
     const sx = px(wx, wy);
     const sy = py(wx, wy);
-    const mounted = u.type === 'knight';
-    const U = hh * (mounted ? 1.15 : u.type === 'villager' ? 0.82 : 0.95);
+    const look = MYTH_LOOK[u.type];
+    const mounted = u.type === 'knight' || !!look?.quadruped;
+    const U = hh * (look ? 0.95 * look.scale : mounted ? 1.15 : u.type === 'villager' ? 0.82 : 0.95);
     const color = this.gs.colorOf(u.owner);
     const dark = shadeHex(color, -0.45);
     const skin = '#e2b48a';
@@ -2901,7 +3099,16 @@ export class Renderer {
       if (u.type === 'swordsman') this.figSwordsman(ctx, fx, fy, U, color, dark, skin, steel, age);
       else if (u.type === 'archer') this.figArcher(ctx, fx, fy, U, color, dark, skin, age);
       else if (u.type === 'knight') this.figKnight(ctx, fx, fy, U, color, dark, skin, steel, age);
+      else if (u.type === 'hero') this.figHero(ctx, fx, fy, U, color, dark, skin, steel, age, now);
+      else if (look) this.figMyth(ctx, fx, fy, U, u, color, dark, now, moving);
       ctx.restore();
+      // identifying glyph above myth units (not mirrored)
+      if (look && u.type !== 'hero' && U >= 9) {
+        ctx.font = `${Math.max(9, Math.round(U * 0.55))}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(look.glyph, fx, fy - U * 2.35);
+        ctx.textAlign = 'start';
+      }
     }
 
     // flash claro de impacto ao levar dano (some em ~200ms)
@@ -3328,4 +3535,11 @@ export class Renderer {
     ctx.fillStyle = color;
     ctx.fillRect(x, y, w * clamp01(frac), h);
   }
+}
+
+/** '#rrggbb' + alpha -> rgba() string. */
+function hexA(hex: string, a: number): string {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Math.max(0, Math.min(1, a)).toFixed(3)})`;
 }
