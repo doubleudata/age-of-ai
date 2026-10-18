@@ -21,7 +21,12 @@ Up to **6 players** per room (humans or bots, free-for-all or up to 3 teams). In
 - **God powers** sit in the bar under the resources. Each one can be used once per game; targeted ones are aimed by clicking the map (Esc cancels).
 - **Counters:** infantry beats cavalry, cavalry beats archers, archers beat infantry, heroes deal ×3 to myth units.
 
+- **Tech tree:** 📜 in the top bar (or **F2** with the AoM hotkeys) opens an interactive tree by building × age; click any available card to research, train or advance.
+- **Hotkeys:** Settings → ⌨ Hotkeys. Pick the *Classic* or *Age of Mythology* preset (QWERT/ASDFG/ZXCVB command grid) and rebind any action.
+- **Maps:** the host picks a **map script** in the room. Random maps (🎲) are generated from layout definitions; scenario maps (📜) are fixed.
+
 Stats are **approximations** of Age of Mythology's design until you import the original data from a copy you own. See **[docs/AOM_DATA.md](docs/AOM_DATA.md)**.
+Unit art, icons, tech data, scenarios and random maps can also be converted from your own copy. See **[tools/aom-pipeline/README.md](tools/aom-pipeline/README.md)**. Nothing from the original game is included in this repository.
 
 ## Requirements
 
@@ -59,6 +64,7 @@ Full walkthrough (including hosting on a 24/7 Android phone via Termux) in **[DE
 npm run typecheck   # type-check server + client
 npm run build       # production build of the client (client/dist)
 npm run smoke       # E2E test: starts the server and simulates a match with 2 WebSocket clients
+node scripts/live_mp_test.mjs 6 ws://127.0.0.1:5199/ws scn:highland_pass   # 6 clients vs a running server, incl. per-tick sync check
 ```
 
 ## Architecture

@@ -10,6 +10,10 @@ and carries a `src` tag:
 - **`original`**: a value replaced by `scripts/aom_import.mjs` from game files
   you own.
 
+Art, icons, the original tech tree, scenarios and random maps go through the
+asset pipeline instead: see [tools/aom-pipeline/README.md](../tools/aom-pipeline/README.md).
+`node tools/aom-pipeline/ingest.mjs --extract <folder> --data` runs both.
+
 ## Importing the original values
 
 You need a copy of Age of Mythology. The tools in
