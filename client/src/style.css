@@ -1135,3 +1135,5 @@ button.tt-card:hover { filter: brightness(1.25); }
 .hk-key.waiting { border-color: #e2c25a; color: #fff1c0; animation: hkpulse 1s infinite; }
 @keyframes hkpulse { 50% { opacity: 0.55; } }
 .tt-card.progress, .tt-chip.progress { border-color: #6aa2d8; color: #cfe4f7; background: rgba(30, 50, 75, 0.85); }
+.map-select { width: 100%; font: inherit; font-size: 13px; padding: 4px 6px; background: rgba(20, 16, 10, 0.7); color: #f1e3b5; border: 1px solid #8a7a4f; border-radius: 4px; }
+.map-desc { font-size: 12px; opacity: 0.8; margin-top: 4px; }

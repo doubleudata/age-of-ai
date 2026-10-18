@@ -13,8 +13,11 @@ import {
   TILE_GRASS,
   TILE_SHALLOW,
   TILE_WATER,
+  TILE_CHARS,
+  TILE_CLIFF,
+  UNIT_DEFS,
 } from '@age/shared';
-import type { NodeType, TerrainKind } from '@age/shared';
+import type { NodeType, RmDef, ScenarioMap, TerrainKind } from '@age/shared';
 import { idx, inBounds, nearestWalkableTile, type Grid } from './path';
 import type { Building, ResNode, Sheep, Unit } from './state';
 import { createSheep, createUnit } from './state';
@@ -30,7 +33,7 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
-interface GenResult {
+export interface GenResult {
   grid: Grid;
   units: Unit[];
   buildings: Building[];
@@ -539,4 +542,233 @@ function carveStraightPaths(grid: Grid, points: { x: number; y: number }[]): voi
       if (y !== b.y) y += dy;
     }
   }
+}
+
+// ======================================================================
+// Data-driven RANDOM MAPS (RmDef) and fixed SCENARIO maps (ScenarioMap).
+// Both return the same GenResult as the built-in terrains, so the rest of the
+// engine (Game, pathing, AI, snapshots) is unchanged.
+// ======================================================================
+
+/** Town Center + starting villagers for one player at (sx, sy). */
+function placeBase(
+  p: number, sx: number, sy: number, size: number, tiles: number[], blocked: Uint8Array,
+  nextId: { v: number }, buildings: Building[], units: Unit[],
+): void {
+  const tcDef = BUILDING_DEFS.town_center;
+  const half = Math.floor(tcDef.size / 2);
+  const tcX = Math.max(1, Math.min(size - tcDef.size - 1, sx - half));
+  const tcY = Math.max(1, Math.min(size - tcDef.size - 1, sy - half));
+  for (let yy = tcY - 2; yy <= tcY + tcDef.size + 1; yy++) {
+    for (let xx = tcX - 2; xx <= tcX + tcDef.size + 1; xx++) {
+      if (xx < 0 || yy < 0 || xx >= size || yy >= size) continue;
+      tiles[idx(xx, yy, size)] = TILE_GRASS;
+      blocked[idx(xx, yy, size)] = 0;
+    }
+  }
+  buildings.push({ id: nextId.v++, owner: p, type: 'town_center', tileX: tcX, tileY: tcY, hp: tcDef.hp, progress: 1, queue: [] });
+  for (let yy = tcY; yy < tcY + tcDef.size; yy++) for (let xx = tcX; xx < tcX + tcDef.size; xx++) blocked[idx(xx, yy, size)] = 1;
+  const spots = ringSpots(tcX, tcY, tcDef.size, size);
+  for (let v = 0; v < START_VILLAGERS; v++) {
+    const spot = spots[v % spots.length];
+    units.push(createUnit(nextId.v++, p, 'villager', spot.x + 0.5, spot.y + 0.5));
+  }
+}
+
+/** Generate a map from a random-map definition. */
+export function generateFromRm(def: RmDef, playerCount: number, forcedSeed?: number): GenResult {
+  let seed = forcedSeed ?? Math.floor(Math.random() * 0xffffffff);
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const r = tryGenerateRm(def, playerCount, seed, false);
+    if (r) {
+      console.log(`[mapgen] rm=${def.id} seed=${seed} attempt=${attempt + 1} OK`);
+      return r;
+    }
+    seed = (seed * 2654435761 + attempt + 1) >>> 0;
+  }
+  const forced = tryGenerateRm(def, playerCount, seed, true);
+  if (!forced) throw new Error(`mapgen: rm ${def.id} failed`);
+  return forced;
+}
+
+function tryGenerateRm(def: RmDef, playerCount: number, seed: number, forceCarve: boolean): GenResult | null {
+  const rng = mulberry32(seed);
+  const size = Math.max(def.minSize, Math.min(def.maxSize, Math.round(Math.sqrt(Math.max(2, playerCount) * def.tilesPerPlayer))));
+  const tiles = new Array<number>(size * size).fill(TILE_GRASS);
+  const blocked = new Uint8Array(size * size);
+  const c = (size - 1) / 2;
+  const ringR = def.playerRing * (size / 2 - 8);
+  const a0 = rng() * Math.PI * 2;
+  const spawns = Array.from({ length: playerCount }, (_, i) => {
+    const a = a0 + (i * 2 * Math.PI) / playerCount;
+    return { x: Math.round(c + Math.cos(a) * ringR), y: Math.round(c + Math.sin(a) * ringR) };
+  });
+  const fishWanted: number[] = [];
+
+  // --- water ---
+  for (const w of def.water ?? []) {
+    if (w.kind === 'center') {
+      const rad = w.radius * (size / 2);
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        const d = Math.hypot(x - c, y - c);
+        const wobble = Math.sin(Math.atan2(y - c, x - c) * 5 + seed) * 2.2 + (rng() - 0.5) * 1.2;
+        if (d < rad + wobble) tiles[idx(x, y, size)] = TILE_WATER;
+      }
+      if (w.fish) fishWanted.push(w.fish);
+    } else if (w.kind === 'lakes') {
+      for (let l = 0; l < w.count; l++) {
+        const p = randomFarPoint(rng, size, spawns, w.avoidPlayers);
+        blobify(tiles, size, p.x, p.y, w.minSize + Math.floor(rng() * (w.maxSize - w.minSize + 1)), TILE_WATER, rng);
+      }
+      if (w.fish) fishWanted.push(w.fish);
+    } else if (w.kind === 'river') {
+      carveRiver(tiles, size, rng, w.fords, false);
+      if (w.fish) fishWanted.push(w.fish);
+    }
+  }
+
+  const nextIdBox = { v: 1 };
+  const units: Unit[] = [];
+  const buildings: Building[] = [];
+  const nodes: ResNode[] = [];
+  const sheep: Sheep[] = [];
+  const placeNode = (type: NodeType, x: number, y: number): boolean => {
+    if (x < 1 || y < 1 || x >= size - 1 || y >= size - 1) return false;
+    const i = idx(x, y, size);
+    if (tiles[i] !== TILE_GRASS || blocked[i]) return false;
+    nodes.push({ id: nextIdBox.v++, type, tileX: x, tileY: y, amount: NODE_DEFS[type].amount });
+    blocked[i] = 1;
+    return true;
+  };
+
+  // --- bases first (they clear water/forest around themselves) ---
+  spawns.forEach((s, p) => placeBase(p, s.x, s.y, size, tiles, blocked, nextIdBox, buildings, units));
+
+  // --- center forest ---
+  if (def.centerForest) {
+    const rad = def.centerForest.radius * (size / 2);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x - c, y - c);
+      if (d < rad && rng() < def.centerForest.density * (1 - (d / rad) * 0.35)) placeNode('tree', x, y);
+    }
+  }
+  // --- forests ---
+  for (let f = 0; f < def.forests.clusters; f++) {
+    const p = randomFarPoint(rng, size, spawns, def.forests.avoidPlayers);
+    placeClusterNodes('tree', def.forests.minSize + Math.floor(rng() * (def.forests.maxSize - def.forests.minSize + 1)), p.x, p.y, size, rng, placeNode);
+  }
+
+  // --- water blocks land movement (after bases so their ring stays dry) ---
+  for (let i = 0; i < tiles.length; i++) if (tiles[i] === TILE_WATER) blocked[i] = 1;
+  const grid: Grid = { size, tiles, blocked };
+
+  const placeSheepAt = (tx: number, ty: number): void => {
+    const w = nearestWalkableTile(grid, Math.max(0, Math.min(size - 1, Math.round(tx))), Math.max(0, Math.min(size - 1, Math.round(ty))));
+    if (w) sheep.push(createSheep(nextIdBox.v++, w.x + 0.5, w.y + 0.5));
+  };
+  const placeCluster = (type: RmDef['perPlayer'][number]['type'], count: number, x: number, y: number): void => {
+    if (type === 'sheep') {
+      for (let k = 0; k < count; k++) placeSheepAt(x + (rng() - 0.5) * 3, y + (rng() - 0.5) * 3);
+    } else {
+      placeClusterNodes(type, count, x, y, size, rng, placeNode);
+    }
+  };
+
+  // --- per-player resources ---
+  for (const s of spawns) {
+    for (const spec of def.perPlayer) {
+      for (let k = 0; k < spec.clusters; k++) {
+        let x = s.x;
+        let y = s.y;
+        for (let tries = 0; tries < 20; tries++) {
+          const a = rng() * Math.PI * 2;
+          const d = spec.minDist + rng() * (spec.maxDist - spec.minDist);
+          x = Math.round(s.x + Math.cos(a) * d);
+          y = Math.round(s.y + Math.sin(a) * d);
+          if (x > 3 && y > 3 && x < size - 4 && y < size - 4 && tiles[idx(x, y, size)] === TILE_GRASS) break;
+        }
+        placeCluster(spec.type, spec.count, x, y);
+      }
+    }
+  }
+  // --- scattered resources ---
+  for (const spec of def.scattered) {
+    for (let k = 0; k < spec.clusters; k++) {
+      const p = randomFarPoint(rng, size, spawns, spec.avoidPlayers);
+      placeCluster(spec.type, spec.count, p.x, p.y);
+    }
+  }
+  // --- fish in deep water ---
+  const fishTotal = fishWanted.reduce((a, b) => a + b, 0);
+  for (let placed = 0, guard = 0; placed < fishTotal && guard < 3000; guard++) {
+    const x = 2 + Math.floor(rng() * (size - 4));
+    const y = 2 + Math.floor(rng() * (size - 4));
+    if (tiles[idx(x, y, size)] !== TILE_WATER) continue;
+    if (nodes.some((n) => n.type === 'fish' && dist(x, y, n.tileX, n.tileY) < 5)) continue;
+    nodes.push({ id: nextIdBox.v++, type: 'fish', tileX: x, tileY: y, amount: NODE_DEFS.fish.amount });
+    placed++;
+  }
+
+  const tcCenters = buildings.map((b) => nearestWalkableTile(grid, b.tileX + 1, b.tileY + 1) ?? { x: b.tileX + 1, y: b.tileY + 1 });
+  if (!forceCarve) {
+    if (!allMutuallyReachable(grid, tcCenters)) return null;
+  } else {
+    carveStraightPaths(grid, tcCenters);
+  }
+  return { grid, units, buildings, nodes, sheep, nextId: nextIdBox.v, seed };
+}
+
+/** Build a fixed scenario map for `playerCount` players (uses the first N starts). */
+export function buildScenarioMap(map: ScenarioMap, playerCount: number): GenResult {
+  if (playerCount > map.starts.length) throw new Error(`map "${map.name}" supports at most ${map.starts.length} players`);
+  const size = map.size;
+  const tiles = new Array<number>(size * size);
+  for (let i = 0; i < tiles.length; i++) tiles[i] = TILE_CHARS[map.tiles[i]] ?? TILE_GRASS;
+  const blocked = new Uint8Array(size * size);
+  for (let i = 0; i < tiles.length; i++) if (tiles[i] === TILE_WATER || tiles[i] === TILE_CLIFF) blocked[i] = 1;
+  const nextIdBox = { v: 1 };
+  const units: Unit[] = [];
+  const buildings: Building[] = [];
+  const nodes: ResNode[] = [];
+  const sheep: Sheep[] = [];
+  const grid: Grid = { size, tiles, blocked };
+  const used = map.starts.slice(0, playerCount);
+
+  // pre-placed buildings for used starts; a start without a TC gets the standard base
+  const preTC = new Set<number>();
+  for (const b of map.buildings ?? []) {
+    if (b.start >= playerCount || !(b.type in BUILDING_DEFS)) continue;
+    const def = BUILDING_DEFS[b.type as keyof typeof BUILDING_DEFS];
+    const tx = Math.round(b.x - def.size / 2);
+    const ty = Math.round(b.y - def.size / 2);
+    let ok = tx >= 0 && ty >= 0 && tx + def.size <= size && ty + def.size <= size;
+    for (let yy = ty; ok && yy < ty + def.size; yy++) for (let xx = tx; xx < tx + def.size; xx++) if (blocked[idx(xx, yy, size)]) ok = false;
+    if (!ok) continue;
+    buildings.push({ id: nextIdBox.v++, owner: b.start, type: b.type as Building['type'], tileX: tx, tileY: ty, hp: def.hp, progress: 1, queue: [] });
+    for (let yy = ty; yy < ty + def.size; yy++) for (let xx = tx; xx < tx + def.size; xx++) blocked[idx(xx, yy, size)] = 1;
+    if (b.type === 'town_center') preTC.add(b.start);
+  }
+  used.forEach((s, p) => { if (!preTC.has(p)) placeBase(p, s.x, s.y, size, tiles, blocked, nextIdBox, buildings, units); });
+  for (const u of map.units ?? []) {
+    if (u.start >= playerCount || !(u.type in UNIT_DEFS)) continue;
+    const w = nearestWalkableTile(grid, Math.floor(u.x), Math.floor(u.y));
+    if (w) units.push(createUnit(nextIdBox.v++, u.start, u.type as Unit['type'], w.x + 0.5, w.y + 0.5));
+  }
+  for (const o of map.objects) {
+    const x = Math.floor(o.x);
+    const y = Math.floor(o.y);
+    if (x < 0 || y < 0 || x >= size || y >= size) continue;
+    if (o.type === 'sheep') {
+      if (!blocked[idx(x, y, size)]) sheep.push(createSheep(nextIdBox.v++, x + 0.5, y + 0.5));
+      continue;
+    }
+    if (!(o.type in NODE_DEFS)) continue;
+    const i = idx(x, y, size);
+    const wantWater = o.type === 'fish';
+    if (wantWater ? tiles[i] !== TILE_WATER : tiles[i] !== TILE_GRASS || blocked[i]) continue;
+    if (!wantWater) blocked[i] = 1;
+    nodes.push({ id: nextIdBox.v++, type: o.type, tileX: x, tileY: y, amount: NODE_DEFS[o.type].amount });
+  }
+  console.log(`[mapgen] scenario "${map.name}" ${size}x${size} players=${playerCount}`);
+  return { grid, units, buildings, nodes, sheep, nextId: nextIdBox.v, seed: 0 };
 }

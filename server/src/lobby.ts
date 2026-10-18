@@ -2,6 +2,7 @@
 
 import { MAJOR_GODS, MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START, PLAYER_COLORS, resolveGod } from '@age/shared';
 import type { GodPick } from '@age/shared';
+import { mapExists, mapList, resolveMap } from './maps';
 import type { BotDifficulty, ClientMessage, GameMode, RoomPlayer, RoomSummary, ServerMessage, TerrainKind } from '@age/shared';
 import { Game, type RoomMember } from './game/room';
 
@@ -45,6 +46,8 @@ interface Room {
    *  desmarca se quiser jogar fechado. */
   broadcast: boolean;
   lastActivity: number; // última ação na sala (Date.now) — p/ fechar sala ociosa
+  /** '' = built-in terrain; 'rm:<id>' / 'scn:<id>' = map from the registry. */
+  mapId: string;
 }
 
 const ROOM_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -231,6 +234,9 @@ export class Lobby {
       case 'setTeam':
         this.setTeam(conn, msg.playerId, msg.team);
         break;
+      case 'setMap':
+        this.setMap(conn, msg.mapId);
+        break;
       case 'setGod':
         this.setGod(conn, msg.playerId, msg.god);
         break;
@@ -384,6 +390,7 @@ export class Lobby {
       terrain: 'classic', // padrão: continente clássico; host troca pra Rio
       broadcast: true, // nasce transmitindo; o host desmarca pra jogar fechado
       lastActivity: Date.now(),
+      mapId: '',
     };
     room.members.set(conn.id, { id: conn.id, ready: false, joinOrder: this.joinCounter++ });
     // Sala já nasce com 1 bot FÁCIL (padrão amigável: o fácil é passivo, não
@@ -693,6 +700,17 @@ export class Lobby {
     this.broadcastRoomState(room.id);
   }
 
+  /** Host picks a random-map definition / scenario map ('' = built-in terrain). */
+  private setMap(conn: Connection, mapId: string): void {
+    if (!conn.roomId) return;
+    const room = this.rooms.get(conn.roomId);
+    if (!room || room.inGame || room.hostId !== conn.id) return;
+    if (typeof mapId !== 'string' || !mapExists(mapId)) return;
+    room.mapId = mapId;
+    this.touch(room);
+    this.broadcastRoomState(room.id);
+  }
+
   /** AoM: choose a major god. Humans pick their own slot; the host also picks
    *  for bots. 'random' is resolved at game start. */
   private setGod(conn: Connection, playerId: number, god: string): void {
@@ -771,6 +789,11 @@ export class Lobby {
       return;
     }
     this.touch(room);
+    const mapSource = resolveMap(room.mapId);
+    if (mapSource && 'scenario' in mapSource && room.members.size > mapSource.scenario.starts.length) {
+      conn.send({ type: 'error', code: 'err.map_too_many', params: { n: mapSource.scenario.starts.length } });
+      return;
+    }
     const allReady = [...room.members.values()].every((m) => m.id === room.hostId || m.ready);
     if (!allReady) {
       conn.send({ type: 'error', code: 'err.not_all_ready' });
@@ -804,6 +827,7 @@ export class Lobby {
       (_winner, winnerName) => this.onGameOver(room.id, winnerName),
       room.mode,
       room.terrain,
+      mapSource,
     );
     room.game = game;
     room.inGame = true;
@@ -933,7 +957,7 @@ export class Lobby {
         god: m.god ?? 'random',
       };
     });
-    const msg: ServerMessage = { type: 'roomState', roomId, players, mode: room.mode, fog: room.fog, terrain: room.terrain, broadcast: room.broadcast };
+    const msg: ServerMessage = { type: 'roomState', roomId, players, mode: room.mode, fog: room.fog, terrain: room.terrain, broadcast: room.broadcast, mapId: room.mapId, maps: mapList() };
     for (const m of room.members.values()) this.conns.get(m.id)?.send(msg);
   }
 }

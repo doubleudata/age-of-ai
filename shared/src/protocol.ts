@@ -14,6 +14,7 @@ import type {
   UnitSnap,
   UnitType,
 } from './types';
+import type { MapListEntry } from './maps';
 
 // ---------- Cliente -> Servidor ----------
 
@@ -86,6 +87,9 @@ export type ClientMessage =
   // AoM: pick a major god (decides the civ). Players pick their own; the host
   // picks for bots. 'random' is resolved when the game starts.
   | { type: 'setGod'; playerId: number; god: string }
+  // host: pick a random-map definition ('rm:<id>') or scenario map ('scn:<id>');
+  // '' = use the built-in terrain (setTerrain)
+  | { type: 'setMap'; mapId: string }
   | { type: 'addBot'; difficulty?: BotDifficulty } // apenas host: adiciona um oponente de IA à sala
   | { type: 'removeBot' } // apenas host: remove o último bot
   | { type: 'startGame' } // apenas host
@@ -127,7 +131,9 @@ export type ServerMessage =
   | { type: 'nameOk' }              // nome aceito -> pode ir pro lobby
   | { type: 'nameTaken' }           // nome já em uso -> escolha outro
   | { type: 'roomList'; rooms: RoomSummary[] }
-  | { type: 'roomState'; roomId: string; players: RoomPlayer[]; mode: GameMode; fog: boolean; terrain: TerrainKind; broadcast: boolean }
+  | { type: 'roomState'; roomId: string; players: RoomPlayer[]; mode: GameMode; fog: boolean; terrain: TerrainKind; broadcast: boolean;
+      /** Selected map ('' = built-in terrain) and the maps this server offers. */
+      mapId?: string; maps?: MapListEntry[] }
   | { type: 'leftRoom' }
   // Erro: o servidor manda um CÓDIGO (traduzido no cliente via i18n) + params
   // opcionais. `age` (número) e `building` (tipo) são convertidos para o nome

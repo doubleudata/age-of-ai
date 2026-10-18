@@ -82,7 +82,8 @@ import type {
   UnitType,
 } from '@age/shared';
 import { DIFFICULTY, runBotAI } from './ai';
-import { generateMap } from './mapgen';
+import { buildScenarioMap, generateFromRm, generateMap } from './mapgen';
+import type { MapSource } from '../maps';
 import { collectSpreadTiles, findPath, idx, isWalkable, nearestWalkableTile, ringTiles, type Grid } from './path';
 import { createUnit, type Building, type GamePlayer, type ResNode, type Sheep, type Unit } from './state';
 
@@ -165,8 +166,14 @@ export class Game {
     private readonly onGameOver: (winner: number, winnerName: string) => void,
     mode: GameMode = 'normal',
     terrain: TerrainKind = 'classic',
+    /** Random-map definition or scenario map (overrides `terrain`). */
+    mapSource?: MapSource,
   ) {
-    const gen = generateMap(members.length, undefined, terrain);
+    const gen = mapSource && 'rm' in mapSource
+      ? generateFromRm(mapSource.rm, members.length)
+      : mapSource && 'scenario' in mapSource
+        ? buildScenarioMap(mapSource.scenario, members.length)
+        : generateMap(members.length, undefined, terrain);
     this.grid = gen.grid;
     this.map = { size: gen.grid.size, tiles: gen.grid.tiles };
     this.nextId = gen.nextId;

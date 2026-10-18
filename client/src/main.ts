@@ -149,6 +149,7 @@ const roomScreen = new RoomScreen({
   onSetTerrain: (terrain) => net.send({ type: 'setTerrain', terrain }),
   onSetBotDifficulty: (botId, difficulty) => net.send({ type: 'setBotDifficulty', botId, difficulty }),
   onSetGod: (playerId, god) => net.send({ type: 'setGod', playerId, god }),
+  onSetMap: (mapId) => net.send({ type: 'setMap', mapId }),
 });
 
 function screenEl(name: ScreenName): HTMLElement {
@@ -250,7 +251,7 @@ function dispatch(msg: ServerMessage): void {
     }
     case 'roomState': {
       lastRoomPlayers = Array.isArray(msg.players) ? msg.players : [];
-      roomScreen.setState(msg.roomId, lastRoomPlayers, myPlayerId, msg.mode, msg.fog, msg.terrain, msg.broadcast);
+      roomScreen.setState(msg.roomId, lastRoomPlayers, myPlayerId, msg.mode, msg.fog, msg.terrain, msg.broadcast, msg.mapId ?? '', msg.maps ?? []);
       // Ignora troca de tela enquanto o overlay de fim de jogo está visível: o
       // servidor manda 'roomState' logo após 'gameOver' (reset do lobby), mas o
       // jogador ainda não confirmou "Voltar ao lobby" — trocar de tela agora

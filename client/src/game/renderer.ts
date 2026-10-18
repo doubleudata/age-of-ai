@@ -4,7 +4,7 @@
 // substituídos por arte dedicada nas próximas etapas.
 
 import type { BuildingSnap, BuildingType, NodeSnap, NodeType, ResourceType, SheepSnap, UnitSnap } from '@age/shared';
-import { BUILDING_DEFS, DEFENSE_DEFS, MYTH_LOOK, POWERS, SHEEP_FOOD, TILE_SHALLOW, TILE_WATER, UNIT_DEFS, isNavalUnit, techBonus } from '@age/shared';
+import { BUILDING_DEFS, DEFENSE_DEFS, MYTH_LOOK, POWERS, SHEEP_FOOD, TILE_CLIFF, TILE_SHALLOW, TILE_WATER, UNIT_DEFS, isNavalUnit, techBonus } from '@age/shared';
 import type { GameState } from '../state';
 import type { Camera } from './camera';
 import { ISO_HH, ISO_HW } from './camera';
@@ -223,6 +223,10 @@ export class Renderer {
           const t = now * 0.00018;
           const wn = vnoise(tx / 4.5 + 3 + t, ty / 4.5 + 9 - t * 0.6);
           ctx.fillStyle = `hsl(206, 52%, ${33 + wn * 8}%)`;
+        } else if (v === TILE_CLIFF) {
+          // CLIFF (steep slope of an imported AoM heightmap): impassable rock
+          const rn = vnoise(tx / 2.2 + 51, ty / 2.2 + 17);
+          ctx.fillStyle = `hsl(28, 12%, ${30 + rn * 12}%)`;
         } else if (v === TILE_SHALLOW) {
           // VAU = BANCO DE AREIA atravessando o rio (travessia a pé; barco não
           // passa). Areia com ruído suave; a borda ondulada com a água funda

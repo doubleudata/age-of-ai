@@ -20,6 +20,10 @@ export function getLang(): Lang {
 type Dict = Record<string, string>;
 
 const PT: Dict = {
+  "room.map_script": "Script de mapa",
+  "room.map_builtin": "Terreno embutido (acima)",
+  "room.map_builtin_desc": "Usa o terreno escolhido acima.",
+  "err.map_too_many": "Este mapa aceita no máximo {n} jogadores.",
   "tt.title": "Árvore tecnológica",
   "tt.close": "Fechar (Esc)",
   "tt.open_tip": "Árvore tecnológica ({key})",
@@ -282,6 +286,10 @@ const PT: Dict = {
 };
 
 const EN: Dict = {
+  "room.map_script": "Map script",
+  "room.map_builtin": "Built-in terrain (above)",
+  "room.map_builtin_desc": "Uses the terrain chosen above.",
+  "err.map_too_many": "This map supports at most {n} players.",
   "tt.title": "Technology tree",
   "tt.close": "Close (Esc)",
   "tt.open_tip": "Technology tree ({key})",
@@ -561,6 +569,10 @@ const EN: Dict = {
 };
 
 const ES: Dict = {
+  "room.map_script": "Script de mapa",
+  "room.map_builtin": "Terreno integrado (arriba)",
+  "room.map_builtin_desc": "Usa el terreno elegido arriba.",
+  "err.map_too_many": "Este mapa admite como máximo {n} jugadores.",
   "tt.title": "Árbol tecnológico",
   "tt.close": "Cerrar (Esc)",
   "tt.open_tip": "Árbol tecnológico ({key})",

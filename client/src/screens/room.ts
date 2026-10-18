@@ -1,7 +1,7 @@
 // Tela 3: Sala — layout "tabuleiro" emoldurado em ouro (estilo AoE): duas colunas
 // (Jogadores | Configuração da partida), ações centrais e chat embaixo. Foco desktop.
 
-import type { BotDifficulty, GameMode, RoomPlayer, TerrainKind } from '@age/shared';
+import type { BotDifficulty, GameMode, MapListEntry, RoomPlayer, TerrainKind } from '@age/shared';
 import { MAJOR_GOD_IDS, MAJOR_GODS, MAX_PLAYERS_PER_ROOM, MAX_TEAMS, MIN_PLAYERS_TO_START } from '@age/shared';
 import { el } from '../ui';
 import { t } from '../i18n';
@@ -22,6 +22,8 @@ export interface RoomScreenDeps {
   onSetBotDifficulty: (botId: number, difficulty: BotDifficulty) => void;
   /** AoM: pick a major god (own slot, or a bot's if host). */
   onSetGod: (playerId: number, god: string) => void;
+  /** Host: random-map definition / scenario map ('' = built-in terrain). */
+  onSetMap: (mapId: string) => void;
 }
 
 /** Order the god chip cycles through. */
@@ -88,6 +90,10 @@ export class RoomScreen {
   private broadcast = true; // nasce transmitindo (igual ao servidor)
   private bcBtns: { on: boolean; btn: HTMLButtonElement }[] = [];
   private terrainBtns: { tr: TerrainKind; btn: HTMLButtonElement }[] = [];
+  private mapSelect!: HTMLSelectElement;
+  private mapDesc!: HTMLElement;
+  private mapId = '';
+  private maps: MapListEntry[] = [];
 
   constructor(private deps: RoomScreenDeps) {
     this.el = el('div', 'screen room-screen');
@@ -105,7 +111,7 @@ export class RoomScreen {
     this.sala = fresh;
     this.chatLog.innerHTML = chatHtml;
     this.chatInput.value = chatVal;
-    this.setState(this.roomId, this.players, this.myId, this.mode, this.fog, this.terrain, this.broadcast);
+    this.setState(this.roomId, this.players, this.myId, this.mode, this.fog, this.terrain, this.broadcast, this.mapId, this.maps);
   }
 
   /** Monta (ou remonta) o tabuleiro inteiro no idioma atual. */
@@ -226,6 +232,16 @@ export class RoomScreen {
     terrCtl.appendChild(terrCards);
     ccol.appendChild(terrCtl);
 
+    // Map script: data-driven random maps + imported scenario maps (host only).
+    const scriptCtl = el('div', 'sala-ctl map-script');
+    scriptCtl.appendChild(ctlLabel(IC_MAP, t('room.map_script')));
+    this.mapSelect = el('select', 'map-select');
+    this.mapSelect.addEventListener('change', () => this.deps.onSetMap(this.mapSelect.value));
+    scriptCtl.appendChild(this.mapSelect);
+    this.mapDesc = el('div', 'map-desc', '');
+    scriptCtl.appendChild(this.mapDesc);
+    ccol.appendChild(scriptCtl);
+
     board.appendChild(ccol);
     sala.appendChild(board);
 
@@ -272,7 +288,9 @@ export class RoomScreen {
     this.chatInput.value = '';
   }
 
-  setState(roomId: string, players: RoomPlayer[], myId: number, mode: GameMode = 'normal', fog = false, terrain: TerrainKind = 'classic', broadcast = true): void {
+  setState(roomId: string, players: RoomPlayer[], myId: number, mode: GameMode = 'normal', fog = false, terrain: TerrainKind = 'classic', broadcast = true, mapId = '', maps: MapListEntry[] = []): void {
+    this.mapId = mapId;
+    this.maps = Array.isArray(maps) ? maps : [];
     this.roomId = roomId;
     this.players = Array.isArray(players) ? players : [];
     this.myId = myId;
@@ -300,9 +318,26 @@ export class RoomScreen {
       btn.disabled = !isHost;
     }
     for (const { tr, btn } of this.terrainBtns) {
-      btn.classList.toggle('primary', tr === this.terrain);
+      btn.classList.toggle('primary', tr === this.terrain && !this.mapId);
       btn.disabled = !isHost;
     }
+    // map script picker
+    const opts: [string, string][] = [['', t('room.map_builtin')],
+      ...this.maps.map((m): [string, string] => [m.id, `${m.kind === 'scenario' ? '📜' : '🎲'} ${m.name}${m.maxPlayers ? ` (≤${m.maxPlayers})` : ''}${m.origin === 'adapted' ? ' · AoM' : ''}`])];
+    const sig = JSON.stringify(opts);
+    if (this.mapSelect.dataset.sig !== sig) {
+      this.mapSelect.innerHTML = '';
+      for (const [v, label] of opts) {
+        const o = el('option', '', label);
+        o.value = v;
+        this.mapSelect.appendChild(o);
+      }
+      this.mapSelect.dataset.sig = sig;
+    }
+    this.mapSelect.value = this.mapId;
+    this.mapSelect.disabled = !isHost;
+    const cur = this.maps.find((m) => m.id === this.mapId);
+    this.mapDesc.textContent = cur ? cur.desc : t('room.map_builtin_desc');
     this.readyBtn.textContent = me?.ready ? t('room.not_ready') : t('room.ready');
     this.readyBtn.classList.toggle('hidden', isHost);
 
