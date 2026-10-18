@@ -9,6 +9,7 @@ import { music } from '../music';
 import type { Sfx } from './audio';
 import type { Camera } from './camera';
 import type { UIState } from './uistate';
+import { actionFor, gridSlot, panVector } from '../hotkeys';
 import { ghostTile, wallLineTiles } from './uistate';
 
 export interface InputDeps {
@@ -19,14 +20,17 @@ export interface InputDeps {
   onTogglePause: () => void;
   isChatOpen: () => boolean;
   openChat: () => void;
+  /** Hotkey hooks (optional so headless tests can omit them). */
+  onToggleTechTree?: () => void;
+  /** Returns true if it closed an open tech tree (Esc). */
+  closeTechTree?: () => boolean;
+  /** AoM-style command grid: press the n-th visible command button. */
+  onGridSlot?: (slot: number) => void;
+  onPowerSlot?: (slot: number) => void;
+  /** The hotkey editor is listening for a key — the game must ignore it. */
+  isCapturingKey?: () => boolean;
 }
 
-const PAN_KEYS: Record<string, [number, number]> = {
-  w: [0, -1], ArrowUp: [0, -1],
-  s: [0, 1], ArrowDown: [0, 1],
-  a: [-1, 0], ArrowLeft: [-1, 0],
-  d: [1, 0], ArrowRight: [1, 0],
-};
 
 const PAN_SPEED = 12; // tiles/segundo em zoom 1
 const EDGE_MARGIN = 26; // px da borda que ativam a rolagem
@@ -116,7 +120,7 @@ export class GameInput {
     let dx = 0;
     let dy = 0;
     for (const k of this.keysDown) {
-      const v = PAN_KEYS[k];
+      const v = panVector(k);
       if (v) {
         dx += v[0];
         dy += v[1];
@@ -260,96 +264,117 @@ export class GameInput {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (this.deps.isChatOpen()) return;
-    if (e.key === 'Enter') {
+    // typing in a form field (e.g. the hotkey editor) never drives the game
+    const tgt = e.target as HTMLElement | null;
+    if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
+    if (this.deps.isCapturingKey?.()) return;
+    const action = actionFor(e);
+    if (action === 'chat') {
       e.preventDefault();
       this.deps.openChat();
       return;
     }
-    // P: pausa/despausa (vale até pausado — é como se sai). Só o P e o chat passam na pausa.
-    if (e.key === 'p' || e.key === 'P') {
+    // Pause works even while paused (it's how you resume).
+    if (action === 'pause') {
       e.preventDefault();
       this.deps.onTogglePause();
       return;
     }
     if (this.paused) return;
-    if (e.key === 'Escape') {
+    if (action === 'cancel') {
       if (this.ui.powerTarget) {
         this.ui.powerTarget = null;
       } else if (this.ui.placement) {
         this.ui.placement = null;
         this.ui.wallDrag = null;
+      } else if (this.deps.closeTechTree?.()) {
+        // closed the tech tree
       } else if (this.gs.selection.size > 0) {
         this.gs.selection.clear();
       }
       return;
     }
-    if (e.key === 'h' || e.key === 'H') {
-      this.deps.onCenterHome();
-      return;
-    }
-    if (e.key === 'm' || e.key === 'M') {
-      const muted = this.sfx.toggleMute();
-      music.setMuted(muted); // o mudo geral também cala a trilha
-      return;
-    }
-    if (e.key === 'n' || e.key === 'N') {
-      music.toggle();
-      return;
-    }
-    if (e.key === '.') {
+    // control groups (fixed): Ctrl+1..9 saves, 1..9 recalls, twice = center (AoE2)
+    if (/^Digit[1-9]$/.test(e.code) && !e.altKey) {
       e.preventDefault();
-      this.deps.onIdleVillager(e.ctrlKey || e.shiftKey);
-      return;
-    }
-    // Parar (X): interrompe mover/coletar/atacar das unidades selecionadas.
-    // (o 'S' já é a câmera; por isso X.)
-    if (e.key === 'x' || e.key === 'X') {
-      const ids = this.gs.selectedOwnUnits().map((u) => u.id);
-      if (ids.length) {
-        this.deps.onCommand({ kind: 'stop', unitIds: ids });
-        this.sfx.uiClick();
-      }
-      return;
-    }
-    // Apagar (Delete): remove as próprias unidades/prédio selecionados.
-    if (e.key === 'Delete') {
-      const ids = this.gs.selectedOwnUnits().map((u) => u.id);
-      const b = this.gs.selectedBuilding();
-      if (b && b.owner === this.gs.you) ids.push(b.id);
-      if (ids.length) {
-        this.deps.onCommand({ kind: 'delete', ids });
-        this.gs.selection.clear();
-        this.sfx.wreck(); // som de destruição
-      }
-      return;
-    }
-    // Ejetar (U): tira as unidades guarnecidas do prédio selecionado — ou
-    // DESEMBARCA o transporte selecionado na costa.
-    if (e.key === 'u' || e.key === 'U') {
-      const b = this.gs.selectedBuilding();
-      if (b && b.owner === this.gs.you && b.garrison) {
-        this.deps.onCommand({ kind: 'unload', buildingId: b.id });
-        this.sfx.uiClick();
-        return;
-      }
-      const tr = this.gs.selectedOwnUnits().find((u) => u.type === 'transport' && (u.garrison ?? 0) > 0);
-      if (tr) {
-        this.deps.onCommand({ kind: 'unload', buildingId: tr.id });
-        this.sfx.uiClick();
-      }
-      return;
-    }
-    // grupos de controle: Ctrl+1..9 salva a seleção; 1..9 seleciona o grupo;
-    // apertar o número de novo em seguida centraliza a câmera nele (AoE2)
-    if (/^[1-9]$/.test(e.key)) {
-      e.preventDefault();
-      const n = Number(e.key);
-      if (e.ctrlKey) this.saveGroup(n);
+      const n = Number(e.code.slice(5));
+      if (e.ctrlKey || e.metaKey) this.saveGroup(n);
       else this.recallGroup(n);
       return;
     }
-    if (e.key in PAN_KEYS) {
-      this.keysDown.add(e.key);
+    const pan = panVector(e.code);
+    if (pan && (action === null || action.startsWith('pan'))) {
+      this.keysDown.add(e.code);
+      return;
+    }
+    switch (action) {
+      case 'home':
+        this.deps.onCenterHome();
+        return;
+      case 'mute': {
+        const muted = this.sfx.toggleMute();
+        music.setMuted(muted); // o mudo geral também cala a trilha
+        return;
+      }
+      case 'music':
+        music.toggle();
+        return;
+      case 'idleVillager':
+        e.preventDefault();
+        this.deps.onIdleVillager(e.ctrlKey || e.shiftKey);
+        return;
+      case 'techTree':
+        e.preventDefault();
+        this.deps.onToggleTechTree?.();
+        return;
+      case 'stop': {
+        // Parar: interrompe mover/coletar/atacar das unidades selecionadas.
+        const ids = this.gs.selectedOwnUnits().map((u) => u.id);
+        if (ids.length) {
+          this.deps.onCommand({ kind: 'stop', unitIds: ids });
+          this.sfx.uiClick();
+        }
+        return;
+      }
+      case 'delete': {
+        // Apagar: remove as próprias unidades/prédio selecionados.
+        const ids = this.gs.selectedOwnUnits().map((u) => u.id);
+        const b = this.gs.selectedBuilding();
+        if (b && b.owner === this.gs.you) ids.push(b.id);
+        if (ids.length) {
+          this.deps.onCommand({ kind: 'delete', ids });
+          this.gs.selection.clear();
+          this.sfx.wreck(); // som de destruição
+        }
+        return;
+      }
+      case 'unload': {
+        // Ejetar: tira as unidades guarnecidas do prédio selecionado — ou
+        // DESEMBARCA o transporte selecionado na costa.
+        const b = this.gs.selectedBuilding();
+        if (b && b.owner === this.gs.you && b.garrison) {
+          this.deps.onCommand({ kind: 'unload', buildingId: b.id });
+          this.sfx.uiClick();
+          return;
+        }
+        const tr = this.gs.selectedOwnUnits().find((u) => u.type === 'transport' && (u.garrison ?? 0) > 0);
+        if (tr) {
+          this.deps.onCommand({ kind: 'unload', buildingId: tr.id });
+          this.sfx.uiClick();
+        }
+        return;
+      }
+      case 'power1': case 'power2': case 'power3': case 'power4':
+        e.preventDefault();
+        this.deps.onPowerSlot?.(Number(action.slice(5)));
+        return;
+      default:
+        break;
+    }
+    const slot = gridSlot(e);
+    if (slot) {
+      e.preventDefault();
+      this.deps.onGridSlot?.(slot);
     }
   };
 
@@ -394,7 +419,7 @@ export class GameInput {
   }
 
   private onKeyUp = (e: KeyboardEvent): void => {
-    this.keysDown.delete(e.key);
+    this.keysDown.delete(e.code);
   };
 
   // ---------------------------------------------------------------- seleção

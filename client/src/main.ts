@@ -16,6 +16,10 @@ import { GameScreen } from './screens/game';
 import { GameOverScreen } from './screens/gameover';
 import { SettingsOverlay } from './screens/settings';
 import './style.css';
+import { loadAomAssets } from './game/aomAssets';
+
+// Optional assets converted from the player's own copy of AoM (tools/aom-pipeline).
+void loadAomAssets();
 
 type ScreenName = 'name' | 'lobby' | 'room' | 'game';
 

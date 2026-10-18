@@ -15,6 +15,8 @@ import { Minimap } from '../game/minimap';
 import { Renderer } from '../game/renderer';
 import { createUIState } from '../game/uistate';
 import { ConnLostOverlay } from './connlost';
+import { TechTreeOverlay } from '../game/techtree';
+import { isCapturingHotkey } from './hotkeyEditor';
 
 export interface GameScreenDeps {
   onCommand: (cmd: GameCommand) => void;
@@ -37,6 +39,7 @@ export class GameScreen {
   private hudDeps!: HudDeps;
   private input: GameInput;
   private connLost: ConnLostOverlay;
+  private techTree: TechTreeOverlay;
   private pauseOverlay!: HTMLElement;
   private pauseBy!: HTMLElement;
   /** "👁 N assistindo" — só existe pra quem JOGA. */
@@ -107,6 +110,7 @@ export class GameScreen {
       onIdleVillager: () => this.selectNextIdleVillager(),
       onUnload: (id) => this.deps.onCommand({ kind: 'unload', buildingId: id }),
       getPlacement: () => this.input.ui.placement,
+      onToggleTechTree: () => this.techTree.toggle(),
     };
     this.createHud();
     root.appendChild(this.hud.el);
@@ -122,6 +126,13 @@ export class GameScreen {
 
     this.connLost = new ConnLostOverlay({ onBackToLobby: () => this.deps.onBackToLobby() });
     root.appendChild(this.connLost.el);
+
+    this.techTree = new TechTreeOverlay(gs, {
+      onResearch: (buildingId, techId) => this.deps.onCommand({ kind: 'research', buildingId, techId }),
+      onTrain: (buildingId, unit) => this.deps.onCommand({ kind: 'train', buildingId, unit }),
+      onAdvanceAge: (minorGod) => this.deps.onCommand({ kind: 'advanceAge', ...(minorGod ? { minorGod } : {}) }),
+    });
+    root.appendChild(this.techTree.el);
 
     // Overlay de PAUSA (aparece pra todos quando alguém aperta P).
     this.pauseOverlay = el('div', 'pause-overlay so-aviso hidden');
@@ -189,6 +200,11 @@ export class GameScreen {
       onTogglePause: () => this.deps.onTogglePause(),
       isChatOpen: () => this.hud.isChatOpen(),
       openChat: () => this.hud.openChat(),
+      onToggleTechTree: () => this.techTree.toggle(),
+      closeTechTree: () => this.techTree.hide(),
+      onGridSlot: (n) => this.hud.pressGridSlot(n),
+      onPowerSlot: (n) => this.hud.pressPowerSlot(n),
+      isCapturingKey: () => isCapturingHotkey(),
     }, this.sfx);
 
     // primeiro gesto do usuário destrava o áudio no navegador (SFX e trilha)
@@ -509,6 +525,7 @@ export class GameScreen {
   }
 
   destroy(): void {
+    this.techTree.hide();
     cancelAnimationFrame(this.rafId);
     this.sfx.stopMusic();
     this.input.destroy();

@@ -1089,3 +1089,49 @@ button.btn.trade-btn {
 .power-btn { width: 34px; height: 34px; font-size: 18px; padding: 0; line-height: 1; }
 .power-btn.used { opacity: 0.3; filter: grayscale(1); }
 .god-btn { display: block; width: 100%; margin-top: 4px; font-size: 12px; text-align: left; white-space: normal; }
+
+/* ---------------- Technology tree ---------------- */
+.tt-open { padding: 2px 8px; font-size: 16px; margin-left: 6px; }
+.tt-overlay { position: absolute; inset: 0; z-index: 40; background: rgba(8, 6, 4, 0.55); display: flex; align-items: center; justify-content: center; }
+.tt-overlay.hidden { display: none; }
+.tt-panel { width: min(1280px, 96vw); height: min(780px, 90vh); display: flex; flex-direction: column; padding: 10px 12px; }
+.tt-head { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+.tt-title { margin: 0; font-size: 20px; color: #f1e3b5; }
+.tt-legend { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.tt-chip { font-size: 11px; padding: 2px 8px; border-radius: 9px; border: 1px solid; }
+.tt-close { width: 32px; height: 32px; padding: 0; }
+.tt-scroll { position: relative; overflow: auto; flex: 1; }
+.tt-arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; }
+.tt-arrow { fill: none; stroke: #d8b25a; stroke-width: 1.6; opacity: 0.75; }
+.tt-body { position: relative; }
+.tt-grid { display: grid; grid-template-columns: 150px repeat(4, minmax(210px, 1fr)); gap: 3px; }
+.tt-corner, .tt-agehead { position: sticky; top: 0; z-index: 2; background: #2a2116; color: #f1e3b5; font-weight: bold; padding: 6px 8px; border-bottom: 2px solid #8a6a2f; font-size: 13px; }
+.tt-agehead.current { background: #4a3a1c; color: #ffe9a8; }
+.tt-rowhead { color: #e9dcb8; font-size: 13px; padding: 8px 6px; background: rgba(42, 33, 22, 0.75); display: flex; align-items: center; }
+.tt-cell { background: rgba(20, 16, 10, 0.45); padding: 4px; display: flex; flex-direction: column; gap: 3px; min-height: 40px; }
+.tt-card { display: flex; align-items: center; gap: 6px; text-align: left; font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 4px; border: 1px solid #5d4a2b; background: rgba(40, 32, 20, 0.9); color: #e9dcb8; position: relative; z-index: 2; }
+button.tt-card { cursor: pointer; }
+button.tt-card:hover { filter: brightness(1.25); }
+.tt-ico { font-size: 16px; width: 22px; text-align: center; }
+.tt-ico-img { width: 22px; height: 22px; object-fit: contain; }
+.tt-txt { display: flex; flex-direction: column; min-width: 0; }
+.tt-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tt-sub { font-size: 10px; opacity: 0.8; white-space: nowrap; }
+.tt-card.done, .tt-chip.done { border-color: #5aa05a; color: #bfe6bf; background: rgba(40, 70, 40, 0.75); }
+.tt-card.ready, .tt-chip.ready { border-color: #e2c25a; color: #fff1c0; box-shadow: 0 0 6px rgba(226, 194, 90, 0.45); }
+.tt-card.costly, .tt-chip.costly { border-color: #b07a3a; color: #e8c79a; }
+.tt-card.locked, .tt-chip.locked { opacity: 0.5; filter: grayscale(0.6); border-color: #555; color: #bbb; }
+.tt-card.other, .tt-chip.other { opacity: 0.35; filter: grayscale(1); border-style: dashed; border-color: #666; color: #999; }
+.ico-img { width: 30px; height: 30px; object-fit: contain; }
+
+/* ---------------- Hotkey editor ---------------- */
+.hk-overlay { z-index: 60; }
+.hk-card { max-height: 86vh; overflow: auto; width: min(560px, 94vw); }
+.hk-presets { display: flex; gap: 6px; margin-bottom: 6px; }
+.hk-list { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.hk-group { margin-top: 8px; font-weight: bold; color: #f1e3b5; border-bottom: 1px solid #5d4a2b; font-size: 13px; }
+.hk-row { display: grid; grid-template-columns: 1fr 110px 110px; gap: 6px; align-items: center; font-size: 13px; }
+.hk-key { padding: 2px 6px; font-size: 12px; min-height: 24px; }
+.hk-key.waiting { border-color: #e2c25a; color: #fff1c0; animation: hkpulse 1s infinite; }
+@keyframes hkpulse { 50% { opacity: 0.55; } }
+.tt-card.progress, .tt-chip.progress { border-color: #6aa2d8; color: #cfe4f7; background: rgba(30, 50, 75, 0.85); }

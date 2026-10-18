@@ -58,6 +58,8 @@ import {
 } from '../i18n';
 import type { GameState } from '../state';
 import { el } from '../ui';
+import { chordLabel, hotkeys } from '../hotkeys';
+import { aomIcon } from './aomAssets';
 
 export interface HudDeps {
   onBuild: (type: BuildingType) => void;
@@ -67,6 +69,8 @@ export interface HudDeps {
   onAdvanceAge: (minorGod?: string) => void;
   /** AoM: invoke a god power (targeted ones arm map targeting). */
   onCastPower: (power: string) => void;
+  /** Open/close the technology tree. */
+  onToggleTechTree: () => void;
   onResearch: (buildingId: number, techId: string) => void;
   onTrade: (action: 'buy' | 'sell', resource: 'food' | 'wood' | 'stone') => void;
   onChat: (text: string) => void;
@@ -209,6 +213,11 @@ export class Hud {
     this.idleBtn.appendChild(this.idleVal);
     this.idleBtn.addEventListener('click', () => this.deps.onIdleVillager());
     top.appendChild(this.idleBtn);
+    // technology tree button
+    const ttBtn = el('button', 'btn tt-open', '📜');
+    ttBtn.title = t('tt.open_tip', { key: chordLabel(hotkeys().techTree[0]) });
+    ttBtn.addEventListener('click', () => this.deps.onToggleTechTree());
+    top.appendChild(ttBtn);
     this.el.appendChild(top);
     this.el.appendChild(this.powerBar);
 
@@ -663,7 +672,14 @@ export class Hud {
         // tile quadrado só com o ícone; nome/custo/descrição na caixa de ajuda
         const btn = el('button', 'btn cmd-tile');
         const st = this.gs.statsFor(unit, this.gs.you);
-        btn.appendChild(el('span', 'ico', st.icon ?? UNIT_ICONS[unit]));
+        const iconUrl = aomIcon('unit', unit, this.gs.civOf(this.gs.you));
+        if (iconUrl) {
+          const img = el('img', 'ico-img');
+          img.src = iconUrl;
+          btn.appendChild(img);
+        } else {
+          btn.appendChild(el('span', 'ico', st.icon ?? UNIT_ICONS[unit]));
+        }
         btn.dataset.tipTitle = t('hud.unit_cost', { unit: this.unitLabel(unit), cost: costLongText(st.cost), time: st.trainTime });
         btn.dataset.tipDesc = `${UNIT_DESCS[unit] ?? ''} ${t('hud.shift_train5')}`;
         // Shift+clique: enfileira 5 (AoE2). Com vários prédios do mesmo tipo
@@ -1004,6 +1020,20 @@ export class Hud {
     if (tech.defense?.range) parts.push(t('hud.eff_def_range', { n: tech.defense.range }));
     const who = tech.units.length ? ` (${tech.units.map((u) => UNIT_NAMES[u]).join(', ')})` : '';
     return `${parts.join(', ')}${who} • ${costLongText(tech.cost)} • ${tech.time}s`;
+  }
+
+  /** AoM command grid hotkey: press the n-th visible, enabled command button. */
+  pressGridSlot(n: number): void {
+    const btns = [...this.actPanel.querySelectorAll<HTMLButtonElement>('.cmd-grid button, .god-btn, .age-btn')]
+      .filter((b) => b.style.display !== 'none' && b.offsetParent !== null);
+    const b = btns[n - 1];
+    if (b && !b.disabled && !b.classList.contains('off')) b.click();
+  }
+
+  /** God power hotkey: n-th power in the bar. */
+  pressPowerSlot(n: number): void {
+    const b = this.powerBar.querySelectorAll<HTMLButtonElement>('.power-btn')[n - 1];
+    if (b && !b.disabled) b.click();
   }
 
   /** Name of a unit type as MY civ calls it (Hoplite / Spearman / Ulfsark…). */

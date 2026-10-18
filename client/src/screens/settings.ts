@@ -4,6 +4,7 @@
 import { el } from '../ui';
 import { settings, RENDER_SCALES, LANGS, type Lang } from '../settings';
 import { t } from '../i18n';
+import { HotkeyEditor } from './hotkeyEditor';
 
 /** Rótulo de cada idioma no seletor (sempre no próprio idioma — assim qualquer
  *  um se reconhece, independente de quem está lendo). */
@@ -26,9 +27,12 @@ export class SettingsOverlay {
   private canLeave = false;
   private leaveInGame = false;
   private confirming = false;
+  /** Hotkey editor (own overlay, opened from this menu). */
+  readonly hotkeyEditor = new HotkeyEditor();
 
   constructor(private deps: SettingsDeps) {
     this.el = el('div', 'overlay hidden');
+    document.body.appendChild(this.hotkeyEditor.el);
     this.card = this.buildCard();
     this.el.appendChild(this.card);
     // clicar fora do card fecha
@@ -94,6 +98,10 @@ export class SettingsOverlay {
 
     const hint = el('p', 'opt-hint', t('opt.res_hint'));
     card.appendChild(hint);
+
+    const hkBtn = el('button', 'btn', `⌨ ${t('hk.title')}`);
+    hkBtn.addEventListener('click', () => { this.hide(); this.hotkeyEditor.show(); });
+    card.appendChild(hkBtn);
 
     const close = el('button', 'btn primary', t('opt.close'));
     close.addEventListener('click', () => this.hide());
